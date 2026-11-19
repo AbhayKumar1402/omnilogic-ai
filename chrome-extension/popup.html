@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OmniLogic Reader</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h16M4 12h10M4 18h14"/>
+        </svg>
+      </div>
+      <span class="brand-name">OmniLogic</span>
+      <span class="brand-tag">Reader</span>
+    </div>
+    <div class="status-pill" id="statusPill">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Connecting</span>
+    </div>
+  </header>
+
+  <!-- Active Document Bar -->
+  <div class="page-info" id="pageInfo">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="page-icon">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+      <polyline points="14 2 14 8 20 8"></polyline>
+    </svg>
+    <span class="page-title" id="pageTitle">Inspecting active tab…</span>
+  </div>
+
+  <!-- Segmented Synthesis Mode -->
+  <div class="mode-section">
+    <div class="section-header">
+      <label class="section-label">Synthesis Profile</label>
+      <span class="section-hint">RAFT Grounded</span>
+    </div>
+    <div class="mode-grid">
+      <button class="mode-btn active" data-mode="executive">
+        <span class="mode-name">Executive</span>
+        <span class="mode-desc">Core takeaways</span>
+      </button>
+      <button class="mode-btn" data-mode="technical">
+        <span class="mode-name">Technical</span>
+        <span class="mode-desc">Specs &amp; metrics</span>
+      </button>
+      <button class="mode-btn" data-mode="chain_of_density">
+        <span class="mode-name">Dense</span>
+        <span class="mode-desc">High entropy</span>
+      </button>
+      <button class="mode-btn" data-mode="actionable">
+        <span class="mode-name">Directives</span>
+        <span class="mode-desc">Next steps</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Primary Action -->
+  <div class="action-wrap">
+    <button class="summarize-btn" id="summarizeBtn">
+      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="21" y1="10" x2="3" y2="10"></line>
+        <line x1="21" y1="6" x2="3" y2="6"></line>
+        <line x1="21" y1="14" x2="3" y2="14"></line>
+        <line x1="21" y1="18" x2="11" y2="18"></line>
+      </svg>
+      <span id="btnText">Summarize Active Page</span>
+    </button>
+  </div>
+
+  <!-- Progress Bar -->
+  <div class="progress-wrap" id="progressWrap" style="display:none">
+    <div class="progress-bar" id="progressBar"></div>
+    <span class="progress-label" id="progressLabel">Extracting content…</span>
+  </div>
+
+  <!-- Reader Output Card -->
+  <div class="output-panel" id="outputPanel" style="display:none">
+    <div class="output-header">
+      <div class="output-tags">
+        <span class="output-label">Digest</span>
+        <span class="mode-tag" id="modeTag"></span>
+      </div>
+      <div class="output-actions">
+        <button class="icon-btn" id="copyBtn" title="Copy digest">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="openAppBtn" title="Open Workspace">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="output-body" id="outputBody"></div>
+
+    <!-- Inline Telemetry Row -->
+    <div class="stats-row" id="statsRow" style="display:none">
+      <div class="stat-pill">
+        <span class="stat-key">Source</span>
+        <span class="stat-val" id="statWords">—</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-key">Digest</span>
+        <span class="stat-val" id="statSummWords">—</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-key">Reduced</span>
+        <span class="stat-val" id="statRatio">—</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-key">Time</span>
+        <span class="stat-val" id="statTime">—</span>
+      </div>
+    </div>
+
+    <div class="output-footer" id="outputFooter" style="display:none">
+      <span class="model-tag" id="modelTag">omnilogic-v1.4</span>
+    </div>
+  </div>
+
+  <!-- Error Notice -->
+  <div class="error-panel" id="errorPanel" style="display:none">
+    <div class="error-content">
+      <strong id="errorTitle">Unable to process page</strong>
+      <p id="errorMsg"></p>
+    </div>
+    <button class="retry-btn" id="retryBtn">Retry</button>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <a class="footer-link" href="http://localhost:3000" target="_blank">Open Workspace</a>
+    <span class="footer-sep">·</span>
+    <span class="footer-text" id="footerBackend">127.0.0.1:8000</span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

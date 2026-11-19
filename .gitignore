@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+**/node_modules/
+venv/
+.venv/
+ENV/
+
+# Next.js build output
+frontend/.next/
+frontend/out/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Environment secrets (never commit API keys)
+.env
+backend/.env
+frontend/.env*.local
+
+# OS & IDE files
+.DS_Store
+Thumbs.db
+*.log
