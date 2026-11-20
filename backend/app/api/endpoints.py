@@ -343,7 +343,7 @@ def extract_text_from_image_or_pdf_gemini(raw_bytes: bytes, mime_type: str, file
     }).encode("utf-8")
 
     ctx = ssl._create_unverified_context()
-    for candidate in ("models/gemini-2.5-flash-lite", "models/gemini-2.0-flash-lite", "models/gemini-flash-lite-latest"):
+    for candidate in ("models/gemini-2.5-flash", "models/gemini-2.5-flash-lite", "models/gemini-flash-latest", "models/gemini-flash-lite-latest"):
         url = f"https://generativelanguage.googleapis.com/v1beta/{candidate}:generateContent?key={api_key}"
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
         try:
