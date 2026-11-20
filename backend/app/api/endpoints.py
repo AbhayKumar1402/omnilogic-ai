@@ -86,28 +86,35 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> Dict[str, Any]:
             except Exception:
                 continue
         data = decompressed if decompressed is not None else raw_stream
+        if b"BT" not in data:
+            continue  # not a page-content stream (font/image/binary) -> would produce garbage
         try:
             text_stream = data.decode("latin-1", errors="ignore")
         except Exception:
             continue
 
-        # Extract text inside PDF string literals (...) inside BT ... ET or TJ/Tj operators
-        for lit in re.findall(r"\(([^()\\]*(?:\\.[^()\\]*)*)\)", text_stream):
-            cleaned_lit = (
-                lit.replace(r"\n", "\n")
-                .replace(r"\r", " ")
-                .replace(r"\t", " ")
-                .replace(r"\(", "(")
-                .replace(r"\)", ")")
-                .replace(r"\\", "\\")
-            )
-            cleaned_lit = re.sub(r"\\\d{3}", " ", cleaned_lit)
-            if any(c.isalpha() for c in cleaned_lit):
-                extracted_chunks.append(cleaned_lit)
+        # Only read text-showing operators: (..) Tj / ' / "  and  [ (..) 12 (..) ] TJ
+        def _unesc(s: str) -> str:
+            s = s.replace(r"\n", "\n").replace(r"\r", " ").replace(r"\t", " ")
+            s = re.sub(r"\\([()\\])", r"\1", s)
+            return re.sub(r"\\(\d{1,3})", lambda m: chr(int(m.group(1), 8) & 0xFF), s)
 
-        # Also extract hex strings <...> in TJ arrays if ASCII/UTF-16BE readable
-        for hex_lit in re.findall(r"<([0-9A-Fa-f]{4,})>", text_stream):
-            if len(hex_lit) % 2 == 0:
+        for m in re.finditer(r"\[((?:[^\]\\]|\\.)*)\]\s*TJ|\(((?:[^()\\]|\\.)*)\)\s*(?:Tj|'|\")", text_stream):
+            if m.group(1) is not None:
+                line = ""
+                for p in re.finditer(r"\(((?:[^()\\]|\\.)*)\)|(-?\d+(?:\.\d+)?)", m.group(1)):
+                    if p.group(1) is not None:
+                        line += _unesc(p.group(1))
+                    elif float(p.group(2)) < -200:
+                        line += " "
+                if line.strip():
+                    extracted_chunks.append(line)
+            elif m.group(2) and m.group(2).strip():
+                extracted_chunks.append(_unesc(m.group(2)))
+
+        # (hex-string decoding removed: without the font ToUnicode map it only yields garbage)
+        for hex_lit in []:
+            if False:
                 try:
                     raw_hex = bytes.fromhex(hex_lit)
                     decoded_hex = (
@@ -125,6 +132,14 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> Dict[str, Any]:
     page_objs = len(re.findall(rb"/Type\s*/Page\b", pdf_bytes)) or max(1, stream_count // 2)
     result = " ".join(extracted_chunks)
     result = re.sub(r"[ \t]+", " ", result).strip()
+    sample = result[:20000]
+    readable = bool(sample) and (
+        len(re.findall(r"[A-Za-z0-9\s.,;:'\"()\-?!%&/]", sample)) / len(sample) > 0.9
+        and len(re.findall(r"\b[A-Za-z]{3,}\b", sample)) > 8
+    )
+    if not readable:
+        # Fonts without a plain-text map: don't return garbage; let the OCR path handle it
+        return {"text": "", "page_count": page_objs, "extracted_pages": 0}
     return {"text": result, "page_count": page_objs, "extracted_pages": page_objs}
 
 # --- Mission Protocol Schemas ---
