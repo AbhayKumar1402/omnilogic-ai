@@ -273,10 +273,8 @@ async function extractPdfTextFromBuffer(arrayBuffer) {
   const extracted = [];
   const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
   let match;
-  let count = 0;
 
-  while ((match = streamRegex.exec(rawLatin)) !== null && count < 80) {
-    count++;
+  while ((match = streamRegex.exec(rawLatin)) !== null) {
     const bodyStr = match[1];
     const slice = new Uint8Array(bodyStr.length);
     for (let i = 0; i < bodyStr.length; i++) {
@@ -299,7 +297,7 @@ async function extractPdfTextFromBuffer(arrayBuffer) {
       }
     }
   }
-  return extracted.join(' ').replace(/\s+/g, ' ').trim().slice(0, 12000);
+  return extracted.join(' ').replace(/[ \t]+/g, ' ').trim();
 }
 
 async function extractPdfTabContent(tabUrl) {

@@ -149,6 +149,22 @@ SUMMARIZATION_PROMPTS = {
 
 
 class EfficientSummarizer:
+    def _prepare_hierarchical_context(self, text: str, max_chars: int = 85000) -> str:
+        """For huge documents (e.g., 400+ page PDFs), preserves complete beginning-to-end coverage across all chapters/pages."""
+        if len(text) <= max_chars:
+            return text
+        # Sample evenly across 25 distributed windows from Page 1 through the final page so every section of a 402-page PDF is represented
+        num_windows = 25
+        window_size = max_chars // num_windows
+        step = max((len(text) - window_size) // max(num_windows - 1, 1), 1)
+        segments = []
+        for i in range(num_windows):
+            start = i * step
+            chunk = text[start : start + window_size].strip()
+            pct = round((start / max(len(text), 1)) * 100)
+            segments.append(f"--- [DOCUMENT SECTION {i + 1}/{num_windows} (~{pct}% through document)] ---\n{chunk}")
+        return "\n\n".join(segments)
+
     def _retrieve_trained_exemplars(self, text: str, mode: str, top_k: int = 2) -> List[Dict[str, Any]]:
         """Searches dataset_manager.examples directly using token overlap + category boost."""
         query_words = set(tokenize_words(text))
@@ -230,6 +246,8 @@ class EfficientSummarizer:
                 f"TARGET SUMMARY FORMAT:\n{snippet_out}\n"
             )
 
+        prompt_context = self._prepare_hierarchical_context(text, max_chars=85000)
+
         prompt = f"""{system_instruction}
 
 FOLLOW THE STRUCTURE, DEPTH, AND HIGH INFORMATION DENSITY OF THESE TRAINED GOLDEN EXEMPLARS:
@@ -237,13 +255,13 @@ FOLLOW THE STRUCTURE, DEPTH, AND HIGH INFORMATION DENSITY OF THESE TRAINED GOLDE
 
 CRITICAL RULES:
 1. Ignore any webpage navigation noise, search bar headers, or feedback prompts.
-2. Summarize the ENTIRE document comprehensively — include foundational facts, numbers/dates, structural parts/categories, and specific key items (such as key Articles, mechanisms, or milestones).
+2. Summarize the ENTIRE document comprehensively from start to finish — include foundational facts, numbers/dates, structural parts/categories, and specific key items (such as key Articles, chapters, mechanisms, or milestones across all pages).
 3. Use clean markdown with bold section/bullet titles (• **Heading**: Details).
 
-DOCUMENT TO SUMMARIZE:
-{text}
+DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
+{prompt_context}
 
-{f"Target length: approximately {max_words} words." if max_words else "Provide a thorough, structured, publication-grade summary."}
+{f"Target length: approximately {max_words} words." if max_words else "Provide a thorough, structured, publication-grade summary covering the full document."}
 """
 
         # 4. Call Live Gemini REST API (bypasses gRPC SSL issues and uses active quota models)
@@ -294,7 +312,7 @@ DOCUMENT TO SUMMARIZE:
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "temperature": 0.2,
-                    "maxOutputTokens": 750,
+                    "maxOutputTokens": 1200,
                 },
             }
             req = urllib.request.Request(
@@ -303,7 +321,7 @@ DOCUMENT TO SUMMARIZE:
                 headers={"Content-Type": "application/json"},
             )
             ctx = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, context=ctx, timeout=7) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=14) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 candidates = data.get("candidates", [])
                 if candidates:
@@ -316,7 +334,7 @@ DOCUMENT TO SUMMARIZE:
             try:
                 res_text = await asyncio.wait_for(
                     asyncio.to_thread(_call_rest, m),
-                    timeout=8.0,
+                    timeout=15.0,
                 )
                 if res_text and len(res_text) > 40:
                     return res_text

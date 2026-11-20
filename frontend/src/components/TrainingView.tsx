@@ -4,11 +4,15 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PRIMARY_API_URL, API_HOSTS } from "@/lib/api";
 
-async function extractClientSidePdfText(file: File): Promise<string> {
+async function extractClientSidePdfText(file: File): Promise<{ text: string; pageCount: number }> {
   const arrayBuffer = await file.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);
   const rawLatin1 = new TextDecoder("latin1").decode(bytes);
   const chunks: string[] = [];
+
+  // Count total /Type /Page entries in the PDF
+  const pageMatches = rawLatin1.match(/\/Type\s*\/Page\b/g);
+  const totalPages = pageMatches ? pageMatches.length : 1;
 
   const decodePdfLiterals = (str: string) => {
     const out: string[] = [];
@@ -67,7 +71,10 @@ async function extractClientSidePdfText(file: File): Promise<string> {
     if (extracted.trim().length > 3) chunks.push(extracted.trim());
   }
 
-  return chunks.join(" ").replace(/\s+/g, " ").trim().slice(0, 12000);
+  return {
+    text: chunks.join(" ").replace(/[ \t]+/g, " ").trim(),
+    pageCount: totalPages,
+  };
 }
 
 interface TrainingViewProps {
@@ -173,6 +180,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
     if (target === "training") setShowAddForm(true);
 
     let extractedText = "";
+    let pageCount = 1;
 
     // 1. Try backend /ocr across API_HOSTS (Render + local fallback)
     for (const host of API_HOSTS) {
@@ -188,6 +196,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
           const data = await res.json();
           if (data.text && data.text.trim().length > 15) {
             extractedText = data.text.trim();
+            pageCount = data.page_count || data.extracted_pages || 1;
             break;
           }
         }
@@ -196,10 +205,16 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
       }
     }
 
-    // 2. Client-side PDF stream fallback if backend hasn't redeployed /ocr yet
-    if (!extractedText && fileBadge === "PDF") {
+    // 2. If backend was an older deployment that capped at 12,000 chars or was unreachable, run full client-side PDF extraction
+    if (fileBadge === "PDF" && (!extractedText || extractedText.length === 12000)) {
       try {
-        extractedText = await extractClientSidePdfText(file);
+        const localPdf = await extractClientSidePdfText(file);
+        if (localPdf.text.length > extractedText.length) {
+          extractedText = localPdf.text;
+        }
+        if (localPdf.pageCount > pageCount) {
+          pageCount = localPdf.pageCount;
+        }
       } catch {}
     }
 
@@ -207,28 +222,36 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
     if (!extractedText || extractedText.length < 15) {
       extractedText =
         fileBadge === "PDF"
-          ? `PDF Training Document [${file.name}] (${Math.round(file.size / 1024)} KB): Structured multi-page reference document ingested for domain-specific summarization alignment and key entity extraction.`
+          ? `PDF Training Document [${file.name}] (${Math.round(file.size / 1024)} KB, ${pageCount} pages): Structured multi-page reference document ingested for domain-specific summarization alignment and key entity extraction.`
           : `Multimodal Visual Training Asset [${file.name}] (${fileBadge} Image, ${Math.round(file.size / 1024)} KB): High-density visual diagram, slide, or scanned page ingested for OCR knowledge extraction and summary synthesis.`;
     }
+
+    const totalWords = extractedText.split(/\s+/).length;
+    const pagesLabel = fileBadge === "PDF" && pageCount > 1 ? ` across all ${pageCount} pages` : "";
 
     if (target === "sandbox") {
       setInputText(extractedText);
       setUploadedFileMeta((prev) =>
-        prev ? { ...prev, status: `✓ Extracted ${extractedText.split(/\s+/).length} words into Sandbox` } : null
+        prev
+          ? {
+              ...prev,
+              status: `✓ Extracted ${totalWords.toLocaleString()} words (${extractedText.length.toLocaleString()} chars)${pagesLabel} into Sandbox`,
+            }
+          : null
       );
       setIsExtractingFile(false);
       return;
     }
 
-    // Populate Training Form
+    // Populate Training Form with FULL extracted text
     setNewDocText(extractedText);
     setUploadedFileMeta((prev) =>
       prev
         ? {
             ...prev,
             status: autoDraftAndSave
-              ? `✓ Extracted ${extractedText.split(/\s+/).length} words — Auto-drafting Gold Summary...`
-              : `✓ Extracted ${extractedText.split(/\s+/).length} words from ${fileBadge}`,
+              ? `✓ Extracted ${totalWords.toLocaleString()} words${pagesLabel} — Auto-drafting Gold Summary...`
+              : `✓ Extracted ${totalWords.toLocaleString()} words${pagesLabel} from ${fileBadge}`,
           }
         : null
     );
@@ -264,7 +287,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
         prev
           ? {
               ...prev,
-              status: `✓ ${fileBadge} extracted & Gold Summary drafted! Click 'Save & Ingest Pair' below.`,
+              status: `✓ Extracted all ${totalWords.toLocaleString()} words${pagesLabel} & Gold Summary drafted! Click 'Save & Ingest Pair' below.`,
             }
           : null
       );

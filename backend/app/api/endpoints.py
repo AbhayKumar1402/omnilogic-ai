@@ -19,37 +19,48 @@ from app.training.summarizer import summarizer
 router = APIRouter()
 
 
-def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
-    """Extracts readable text from raw PDF bytes using pypdf, PyMuPDF, or pure-Python zlib FlateDecode."""
-    # 1. Try pypdf if installed
+def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> Dict[str, Any]:
+    """Extracts FULL readable text from all pages of raw PDF bytes using pypdf, PyMuPDF, or pure-Python zlib FlateDecode."""
+    # 1. Try pypdf if installed (extracts ALL pages, e.g., 402+ pages)
     try:
         import pypdf
         reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        total_pages = len(reader.pages)
         pages_text = []
-        for page in reader.pages[:25]:
-            t = page.extract_text() or ""
-            if t.strip():
-                pages_text.append(t.strip())
+        for idx, page in enumerate(reader.pages):
+            try:
+                t = page.extract_text() or ""
+                if t.strip():
+                    pages_text.append(f"[Page {idx + 1}/{total_pages}]\n{t.strip()}")
+            except Exception:
+                continue
         joined = "\n\n".join(pages_text).strip()
         if len(joined) > 40:
-            return joined[:12000]
+            return {"text": joined, "page_count": total_pages, "extracted_pages": len(pages_text)}
     except Exception:
         pass
 
-    # 2. Try PyMuPDF (fitz) if installed
+    # 2. Try PyMuPDF (fitz) if installed (extracts ALL pages)
     try:
         import fitz
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        pages_text = [page.get_text() for page in doc[:25]]
+        total_pages = len(doc)
+        pages_text = []
+        for idx, page in enumerate(doc):
+            t = page.get_text() or ""
+            if t.strip():
+                pages_text.append(f"[Page {idx + 1}/{total_pages}]\n{t.strip()}")
         joined = "\n\n".join(pages_text).strip()
         if len(joined) > 40:
-            return joined[:12000]
+            return {"text": joined, "page_count": total_pages, "extracted_pages": len(pages_text)}
     except Exception:
         pass
 
-    # 3. Pure-Python zlib FlateDecode PDF stream extractor (zero external dependencies)
+    # 3. Pure-Python zlib FlateDecode PDF stream extractor (zero external dependencies, processes ALL streams)
     extracted_chunks: List[str] = []
+    stream_count = 0
     for match in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.DOTALL):
+        stream_count += 1
         raw_stream = match.group(1)
         decompressed = None
         for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
@@ -75,13 +86,30 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
                 .replace(r"\\", "\\")
             )
             cleaned_lit = re.sub(r"\\\d{3}", " ", cleaned_lit)
-            # Keep printable ASCII/Latin text
             if any(c.isalpha() for c in cleaned_lit):
                 extracted_chunks.append(cleaned_lit)
 
+        # Also extract hex strings <...> in TJ arrays if ASCII/UTF-16BE readable
+        for hex_lit in re.findall(r"<([0-9A-Fa-f]{4,})>", text_stream):
+            if len(hex_lit) % 2 == 0:
+                try:
+                    raw_hex = bytes.fromhex(hex_lit)
+                    decoded_hex = (
+                        raw_hex.decode("utf-16-be", errors="ignore")
+                        if b"\x00" in raw_hex
+                        else raw_hex.decode("latin-1", errors="ignore")
+                    )
+                    decoded_hex = "".join(ch for ch in decoded_hex if ch.isprintable())
+                    if sum(c.isalpha() for c in decoded_hex) >= 2:
+                        extracted_chunks.append(decoded_hex)
+                except Exception:
+                    pass
+
+    # Count /Type /Page objects in PDF
+    page_objs = len(re.findall(rb"/Type\s*/Page\b", pdf_bytes)) or max(1, stream_count // 2)
     result = " ".join(extracted_chunks)
-    result = re.sub(r"\s+", " ", result).strip()
-    return result[:12000]
+    result = re.sub(r"[ \t]+", " ", result).strip()
+    return {"text": result, "page_count": page_objs, "extracted_pages": page_objs}
 
 # --- Mission Protocol Schemas ---
 class MissionRequest(BaseModel):
@@ -218,12 +246,13 @@ async def summarize_url(request: SummarizeUrlRequest):
             raw_bytes = resp.read()
 
         if "application/pdf" in content_type or raw_bytes[:5] == b"%PDF-" or request.url.lower().split("?")[0].endswith(".pdf"):
-            clean = extract_text_from_pdf_bytes(raw_bytes)
+            pdf_res = extract_text_from_pdf_bytes(raw_bytes)
+            clean = pdf_res["text"]
         else:
             raw_html = raw_bytes.decode("utf-8", errors="ignore")
             clean = re.sub(r"<(script|style|noscript|nav|footer|header)[^>]*>.*?</\1>", " ", raw_html, flags=re.S | re.I)
             clean = re.sub(r"<[^>]+>", " ", clean)
-            clean = re.sub(r"\s+", " ", clean).strip()[:10000]
+            clean = re.sub(r"\s+", " ", clean).strip()
 
         if len(clean) < 40:
             clean = f"Document content from {request.url}"
@@ -315,7 +344,10 @@ async def extract_ocr_or_pdf(file: UploadFile = File(...), type: Optional[str] =
         )
 
         if is_pdf:
-            text = extract_text_from_pdf_bytes(raw_bytes)
+            pdf_res = extract_text_from_pdf_bytes(raw_bytes)
+            text = pdf_res["text"]
+            page_count = pdf_res["page_count"]
+            extracted_pages = pdf_res["extracted_pages"]
             # If scanned PDF without embedded text layer, use Gemini Vision OCR
             if not text or len(text.strip()) < 30:
                 text = extract_text_from_image_or_pdf_gemini(raw_bytes, "application/pdf", filename)
@@ -328,8 +360,11 @@ async def extract_ocr_or_pdf(file: UploadFile = File(...), type: Optional[str] =
                 "status": "ok",
                 "file_type": "pdf",
                 "filename": file.filename,
-                "text": text[:12000],
-                "char_count": len(text)
+                "page_count": page_count,
+                "extracted_pages": extracted_pages,
+                "text": text,
+                "char_count": len(text),
+                "word_count": len(text.split())
             }
 
         if is_image:
@@ -357,8 +392,10 @@ async def extract_ocr_or_pdf(file: UploadFile = File(...), type: Optional[str] =
                 "status": "ok",
                 "file_type": "image",
                 "filename": file.filename,
-                "text": text[:12000],
-                "char_count": len(text)
+                "page_count": 1,
+                "text": text,
+                "char_count": len(text),
+                "word_count": len(text.split())
             }
 
         text = raw_bytes.decode("utf-8", errors="ignore").strip()
@@ -366,8 +403,10 @@ async def extract_ocr_or_pdf(file: UploadFile = File(...), type: Optional[str] =
             "status": "ok",
             "file_type": "text",
             "filename": file.filename,
-            "text": text[:12000],
-            "char_count": len(text)
+            "page_count": 1,
+            "text": text,
+            "char_count": len(text),
+            "word_count": len(text.split())
         }
     except HTTPException:
         raise
