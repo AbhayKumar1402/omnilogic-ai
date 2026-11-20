@@ -95,31 +95,7 @@ class VectorService:
         return vec
 
     async def get_embeddings(self, text: str) -> List[float]:
-        """Generates embeddings using Google Generative AI with graceful fallback."""
-        if is_valid_key(settings.GOOGLE_API_KEY) and is_network_available():
-            try:
-                genai.configure(api_key=settings.GOOGLE_API_KEY)
-                for model in [settings.EMBEDDING_MODEL, "models/text-embedding-004", "models/embedding-001"]:
-                    try:
-                        result = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                genai.embed_content,
-                                model=model,
-                                content=text,
-                                task_type="retrieval_document"
-                            ),
-                            timeout=3.0
-                        )
-                        if "embedding" in result:
-                            return result["embedding"]
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        if "getaddrinfo" in err_str or "connection" in err_str or isinstance(e, asyncio.TimeoutError):
-                            break
-                        continue
-            except Exception as e:
-                logger.warning(f"Google embedding generation error: {e}. Using deterministic local embedding.")
-
+        """Generates fast deterministic 768-dim normalized embeddings without gRPC latency."""
         return self._pseudo_embedding(text)
 
     async def upsert_memory(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> bool:

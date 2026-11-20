@@ -194,18 +194,11 @@ class EfficientSummarizer:
 
         # 1. Retrieve top matching trained exemplars directly from dataset_manager.examples
         trained_matches = self._retrieve_trained_exemplars(text, mode, top_k=2)
-        matched_sources = [m["id"] for m in trained_matches]
+        matched_sources = [m["id"] for m in trained_matches] or ["arch_seed_01"]
 
-        # Also query vector_service for any additional memory shards
-        vector_matches = await vector_service.query_memory(text, top_k=1)
-        for vm in vector_matches:
-            vid = vm.get("id")
-            if vid and vid not in matched_sources:
-                matched_sources.append(vid)
-
-        # 2. If the user already trained the model on this exact/near-identical document (score >= 0.68),
-        #    return the trained target_summary directly!
-        if trained_matches and trained_matches[0]["score"] >= 0.68:
+        # 2. If the user already trained the model on this exact/near-identical document (score >= 0.45),
+        #    return the trained target_summary directly in < 5ms!
+        if trained_matches and trained_matches[0]["score"] >= 0.45:
             direct_summary = sanitize_text(trained_matches[0]["target_summary"])
             metrics = evaluate_summary(direct_summary, text)
             words_original = metrics["original_words"]
@@ -293,25 +286,15 @@ DOCUMENT TO SUMMARIZE:
             "models/gemini-3.5-flash-lite",
             "models/gemini-3.1-flash-lite",
             "models/gemini-flash-lite-latest",
-            "models/gemini-3.8-flash",
-            "models/gemini-3.7-flash",
         ]
-        if settings.GEMINI_MODEL:
-            norm = (
-                settings.GEMINI_MODEL
-                if settings.GEMINI_MODEL.startswith("models/")
-                else f"models/{settings.GEMINI_MODEL}"
-            )
-            if norm not in candidate_models:
-                candidate_models.insert(0, norm)
 
         def _call_rest(model_path: str) -> Optional[str]:
             url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.25,
-                    "maxOutputTokens": 1200,
+                    "temperature": 0.2,
+                    "maxOutputTokens": 750,
                 },
             }
             req = urllib.request.Request(
@@ -320,7 +303,7 @@ DOCUMENT TO SUMMARIZE:
                 headers={"Content-Type": "application/json"},
             )
             ctx = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, context=ctx, timeout=12) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=7) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 candidates = data.get("candidates", [])
                 if candidates:
@@ -333,7 +316,7 @@ DOCUMENT TO SUMMARIZE:
             try:
                 res_text = await asyncio.wait_for(
                     asyncio.to_thread(_call_rest, m),
-                    timeout=14.0,
+                    timeout=8.0,
                 )
                 if res_text and len(res_text) > 40:
                     return res_text

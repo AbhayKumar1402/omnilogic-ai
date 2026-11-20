@@ -38,38 +38,53 @@ if is_valid_key(settings.GOOGLE_API_KEY) and is_network_available():
         logger.warning(f"Failed to configure Google Generative AI: {e}")
 
 async def _call_gemini_with_fallback(prompt: str) -> Optional[str]:
-    """Attempts to call available Gemini models with non-blocking execution and graceful fallback."""
-    if not is_valid_key(settings.GOOGLE_API_KEY):
+    """Calls Gemini v1beta REST endpoint directly with fast timeout and graceful fallback."""
+    if not is_valid_key(settings.GOOGLE_API_KEY) or not is_network_available():
         return None
 
-    if not is_network_available():
-        logger.info("Outbound network unavailable or restricted; using offline synthesis mode.")
-        return None
+    import json
+    import ssl
+    import urllib.request
 
+    api_key = settings.GOOGLE_API_KEY.strip()
     candidate_models = [
-        settings.GEMINI_MODEL,
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
-        "gemini-pro"
+        "models/gemini-3.5-flash-lite",
+        "models/gemini-3.1-flash-lite",
+        "models/gemini-flash-lite-latest",
     ]
-    seen = set()
-    models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
-    for model_name in models:
+    def _call_rest(model_path: str) -> Optional[str]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.25, "maxOutputTokens": 700},
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        ctx = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts and "text" in parts[0]:
+                    return parts[0]["text"].strip()
+        return None
+
+    for model_name in candidate_models:
         try:
-            model = genai.GenerativeModel(model_name)
-            response = await asyncio.wait_for(
-                asyncio.to_thread(model.generate_content, prompt),
-                timeout=5.0
+            response_text = await asyncio.wait_for(
+                asyncio.to_thread(_call_rest, model_name),
+                timeout=7.0,
             )
-            if response and response.text:
-                return response.text
+            if response_text:
+                return response_text
         except Exception as e:
             logger.info(f"Model {model_name} invocation issue: {e}")
-            err_msg = str(e).lower()
-            if "getaddrinfo" in err_msg or "connection" in err_msg or isinstance(e, asyncio.TimeoutError):
-                break
+            continue
 
     return None
 

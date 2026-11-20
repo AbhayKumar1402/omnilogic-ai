@@ -133,16 +133,22 @@ def compute_rouge_n(hypothesis: str, reference: str, n: int = 1) -> float:
     return round(f1, 4)
 
 def compute_lcs(x: List[str], y: List[str]) -> int:
-    """Computes length of Longest Common Subsequence."""
+    """Computes length of Longest Common Subsequence with bounded window for instant speed."""
+    x = x[:300]
+    y = y[:300]
     m, n = len(x), len(y)
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    dp = [0] * (n + 1)
     for i in range(m):
+        prev = 0
+        xi = x[i]
         for j in range(n):
-            if x[i] == y[j]:
-                dp[i + 1][j + 1] = dp[i][j] + 1
-            else:
-                dp[i + 1][j + 1] = max(dp[i + 1][j], dp[i][j + 1])
-    return dp[m][n]
+            temp = dp[j + 1]
+            if xi == y[j]:
+                dp[j + 1] = prev + 1
+            elif dp[j] > dp[j + 1]:
+                dp[j + 1] = dp[j]
+            prev = temp
+    return dp[n]
 
 def compute_rouge_l(hypothesis: str, reference: str) -> float:
     """Computes ROUGE-L (Longest Common Subsequence) F1 score."""
