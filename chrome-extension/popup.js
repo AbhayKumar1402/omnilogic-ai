@@ -387,23 +387,19 @@ openAppBtn.addEventListener('click', () => {
 // ── Restore last session ───────────────────────────────────
 async function restoreLastSession(tab) {
   const data = await chrome.storage.local.get(['lastSummary','lastMode','lastUrl','lastTitle','lastTime']);
-  if (data.lastSummary && data.lastUrl === tab?.url) {
-    // Show previous summary for the same page
+  if (
+    data.lastSummary &&
+    data.lastUrl === tab?.url &&
+    !data.lastSummary.includes('AI Mode conversation:') &&
+    data.lastTime &&
+    (Date.now() - data.lastTime) < 120000
+  ) {
+    // Show previous summary for the same page (only if fresh < 2 mins and clean)
     lastSummary = data.lastSummary;
     outputBody.innerHTML = renderSummary(lastSummary);
     modeTag.textContent  = formatMode(data.lastMode || 'executive');
     outputFooter.style.display = 'flex';
     outputPanel.style.display  = 'block';
-
-    const ago = data.lastTime
-      ? Math.round((Date.now() - data.lastTime) / 60000)
-      : null;
-    if (ago !== null && ago < 60) {
-      progressLabel.textContent = `Showing cached summary from ${ago < 1 ? '<1' : ago} min ago`;
-      progressWrap.style.display = 'flex';
-      progressBar.style.width = '100%';
-      setTimeout(() => { progressWrap.style.display = 'none'; }, 3000);
-    }
   }
 }
 

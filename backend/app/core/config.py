@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     
     # AI Keys
     GOOGLE_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "models/gemini-3.5-flash-lite"
     EMBEDDING_MODEL: str = "models/text-embedding-004"
     TUNED_MODEL_NAME: Optional[str] = None
     TRAINING_DATA_PATH: str = str(BACKEND_DIR / "app" / "training" / "training_dataset.jsonl")

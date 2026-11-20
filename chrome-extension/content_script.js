@@ -52,7 +52,9 @@
     const sourceEl = primaryContent || clone;
     let text = sourceEl.innerText || sourceEl.textContent || '';
 
-    // Strip bracketed citations like [1], [13], [b], [a], [edit], [citation needed]
+    // Strip bracketed citations like [1], [13], [b], [a], [edit], [citation needed] and Google AI Mode header noise
+    text = text.replace(/AI Mode conversation:.*?Do you want to provide feedback\.?/gi, '');
+    text = text.replace(/\b(Article\s+\d+[A-Z]?(?:\s*(?:&|,|and)\s*\d+[A-Z]?)*)\.\s+/g, '$1: ');
     text = text.replace(/\[\s*(?:\d+|[a-zA-Z]{1,3}|citation needed|edit|note|cite_note)\s*\]/gi, '');
     text = text.replace(/\s+([,.;:!?])/g, '$1');
 
