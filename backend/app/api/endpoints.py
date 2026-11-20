@@ -1,6 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
+import io
+import re
+import zlib
+import urllib.request
 from app.core.protocol import mission_protocol
 from app.core.supabase import supabase_service
 from app.core.vector import vector_service
@@ -9,6 +13,71 @@ from app.training.trainer import trainer
 from app.training.summarizer import summarizer
 
 router = APIRouter()
+
+
+def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
+    """Extracts readable text from raw PDF bytes using pypdf, PyMuPDF, or pure-Python zlib FlateDecode."""
+    # 1. Try pypdf if installed
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        pages_text = []
+        for page in reader.pages[:25]:
+            t = page.extract_text() or ""
+            if t.strip():
+                pages_text.append(t.strip())
+        joined = "\n\n".join(pages_text).strip()
+        if len(joined) > 40:
+            return joined[:12000]
+    except Exception:
+        pass
+
+    # 2. Try PyMuPDF (fitz) if installed
+    try:
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        pages_text = [page.get_text() for page in doc[:25]]
+        joined = "\n\n".join(pages_text).strip()
+        if len(joined) > 40:
+            return joined[:12000]
+    except Exception:
+        pass
+
+    # 3. Pure-Python zlib FlateDecode PDF stream extractor (zero external dependencies)
+    extracted_chunks: List[str] = []
+    for match in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.DOTALL):
+        raw_stream = match.group(1)
+        decompressed = None
+        for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+            try:
+                decompressed = zlib.decompress(raw_stream, wbits)
+                break
+            except Exception:
+                continue
+        data = decompressed if decompressed is not None else raw_stream
+        try:
+            text_stream = data.decode("latin-1", errors="ignore")
+        except Exception:
+            continue
+
+        # Extract text inside PDF string literals (...) inside BT ... ET or TJ/Tj operators
+        for lit in re.findall(r"\(([^()\\]*(?:\\.[^()\\]*)*)\)", text_stream):
+            cleaned_lit = (
+                lit.replace(r"\n", "\n")
+                .replace(r"\r", " ")
+                .replace(r"\t", " ")
+                .replace(r"\(", "(")
+                .replace(r"\)", ")")
+                .replace(r"\\", "\\")
+            )
+            cleaned_lit = re.sub(r"\\\d{3}", " ", cleaned_lit)
+            # Keep printable ASCII/Latin text
+            if any(c.isalpha() for c in cleaned_lit):
+                extracted_chunks.append(cleaned_lit)
+
+    result = " ".join(extracted_chunks)
+    result = re.sub(r"\s+", " ", result).strip()
+    return result[:12000]
 
 # --- Mission Protocol Schemas ---
 class MissionRequest(BaseModel):
@@ -133,23 +202,29 @@ async def run_summarizer(request: SummarizeRequest):
 
 @router.post("/summarize/url", response_model=SummarizeResponse)
 async def summarize_url(request: SummarizeUrlRequest):
-    import re
-    import urllib.request
+    import ssl
     try:
         req = urllib.request.Request(
             request.url,
             headers={"User-Agent": "Mozilla/5.0 (OmniLogic AI Summarizer/1.0)"}
         )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            raw_html = resp.read().decode("utf-8", errors="ignore")
-        # Strip scripts, styles, tags
-        clean = re.sub(r"<(script|style|noscript|nav|footer|header)[^>]*>.*?</\1>", " ", raw_html, flags=re.S | re.I)
-        clean = re.sub(r"<[^>]+>", " ", clean)
-        clean = re.sub(r"\s+", " ", clean).strip()[:8000]
+        ctx = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            raw_bytes = resp.read()
+
+        if "application/pdf" in content_type or raw_bytes[:5] == b"%PDF-" or request.url.lower().split("?")[0].endswith(".pdf"):
+            clean = extract_text_from_pdf_bytes(raw_bytes)
+        else:
+            raw_html = raw_bytes.decode("utf-8", errors="ignore")
+            clean = re.sub(r"<(script|style|noscript|nav|footer|header)[^>]*>.*?</\1>", " ", raw_html, flags=re.S | re.I)
+            clean = re.sub(r"<[^>]+>", " ", clean)
+            clean = re.sub(r"\s+", " ", clean).strip()[:10000]
+
         if len(clean) < 40:
-            clean = f"Webpage content from {request.url}"
+            clean = f"Document content from {request.url}"
     except Exception as fetch_err:
-        clean = f"Live webpage summary request for {request.url}. (Note: Direct fetch fallback activated: {fetch_err})"
+        clean = f"Live document summary request for {request.url}. (Note: Direct fetch fallback activated: {fetch_err})"
 
     result = await summarizer.summarize(
         text=clean,
@@ -171,6 +246,29 @@ async def summarize_url(request: SummarizeUrlRequest):
         metrics=result["metrics"],
         grounding_exemplars=result["grounding_exemplars"]
     )
+
+
+@router.post("/ocr")
+async def extract_ocr_or_pdf(file: UploadFile = File(...), type: Optional[str] = Form(None)):
+    """Extracts text from an uploaded PDF or text/image file for the Chrome Extension."""
+    try:
+        raw_bytes = await file.read()
+        filename = (file.filename or "").lower()
+        if type == "pdf" or filename.endswith(".pdf") or raw_bytes[:5] == b"%PDF-":
+            text = extract_text_from_pdf_bytes(raw_bytes)
+            if not text or len(text.strip()) < 20:
+                raise HTTPException(
+                    status_code=422,
+                    detail="This PDF appears to be a scanned image without an embedded text layer."
+                )
+            return {"status": "ok", "text": text, "char_count": len(text)}
+        else:
+            text = raw_bytes.decode("utf-8", errors="ignore").strip()
+            return {"status": "ok", "text": text[:12000], "char_count": len(text)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File extraction failed: {e}")
 
 # --- Training Endpoints ---
 @router.post("/train/start")

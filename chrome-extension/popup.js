@@ -233,6 +233,101 @@ async function callSummarizer(text, mode, meta) {
   };
 }
 
+// ── Client-Side & Backend PDF Extractor ────────────────────
+function isPdfUrl(url = '') {
+  const clean = url.toLowerCase().split('?')[0].split('#')[0];
+  return clean.endsWith('.pdf') || url.toLowerCase().includes('.pdf');
+}
+
+async function decompressFlate(uint8Slice) {
+  for (const fmt of ['deflate', 'deflate-raw']) {
+    try {
+      const ds = new DecompressionStream(fmt);
+      const writer = ds.writable.getWriter();
+      writer.write(uint8Slice).catch(() => {});
+      writer.close().catch(() => {});
+      const reader = ds.readable.getReader();
+      const chunks = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        total += value.byteLength;
+      }
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const c of chunks) {
+        out.set(c, offset);
+        offset += c.byteLength;
+      }
+      return new TextDecoder('latin1').decode(out);
+    } catch (_) {}
+  }
+  return new TextDecoder('latin1').decode(uint8Slice);
+}
+
+async function extractPdfTextFromBuffer(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const rawLatin = new TextDecoder('latin1').decode(bytes);
+  const extracted = [];
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let match;
+  let count = 0;
+
+  while ((match = streamRegex.exec(rawLatin)) !== null && count < 80) {
+    count++;
+    const bodyStr = match[1];
+    const slice = new Uint8Array(bodyStr.length);
+    for (let i = 0; i < bodyStr.length; i++) {
+      slice[i] = bodyStr.charCodeAt(i) & 0xff;
+    }
+    const decoded = await decompressFlate(slice);
+    const litRegex = /\(([^()\\]*(?:\\.[^()\\]*)*)\)/g;
+    let litMatch;
+    while ((litMatch = litRegex.exec(decoded)) !== null) {
+      let s = litMatch[1]
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, ' ')
+        .replace(/\\t/g, ' ')
+        .replace(/\\\(/g, '(')
+        .replace(/\\\)/g, ')')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\\d{3}/g, ' ');
+      if (/[a-zA-Z]{2,}/.test(s)) {
+        extracted.push(s);
+      }
+    }
+  }
+  return extracted.join(' ').replace(/\s+/g, ' ').trim().slice(0, 12000);
+}
+
+async function extractPdfTabContent(tabUrl) {
+  const resp = await fetch(tabUrl);
+  const blob = await resp.blob();
+
+  for (const host of [activeBackend, 'https://omnilogic-backend.onrender.com', 'http://127.0.0.1:8000']) {
+    try {
+      const formData = new FormData();
+      formData.append('file', blob, 'document.pdf');
+      formData.append('type', 'pdf');
+      const ocrResp = await fetch(`${host}/api/v1/ocr`, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(15000)
+      });
+      if (ocrResp.ok) {
+        const data = await ocrResp.json();
+        if (data.text && data.text.trim().length > 40) {
+          return data.text.trim();
+        }
+      }
+    } catch (_) {}
+  }
+
+  return await extractPdfTextFromBuffer(await blob.arrayBuffer());
+}
+
 // ── Main summarize flow ────────────────────────────────────
 async function runSummarize() {
   if (isLoading) return;
@@ -259,19 +354,43 @@ async function runSummarize() {
       throw new Error('Cannot summarize browser internal pages. Please navigate to a real web page.');
     }
 
-    // Step 2 — Extract content
+    // Step 2 — Extract content (supports both HTML pages and PDF tabs)
     setProgress(35, 'Extracting readable content…');
     let extracted;
-    try {
-      extracted = await extractPageContent(currentTab);
-    } catch (e) {
-      // Last-resort: use tab title + URL as minimal context
+    if (isPdfUrl(currentTab.url)) {
+      setProgress(40, 'Extracting PDF document text…');
+      const pdfText = await extractPdfTabContent(currentTab.url);
       extracted = {
-        success: false,
-        text: `Page: ${currentTab.title}\nURL: ${currentTab.url}`,
-        meta: { title: currentTab.title, url: currentTab.url },
-        wordCount: 10
+        success: true,
+        text: pdfText,
+        meta: { title: currentTab.title || 'PDF Document', url: currentTab.url },
+        wordCount: countWords(pdfText)
       };
+    } else {
+      try {
+        extracted = await extractPageContent(currentTab);
+      } catch (e) {
+        extracted = {
+          success: false,
+          text: '',
+          meta: { title: currentTab.title, url: currentTab.url },
+          wordCount: 0
+        };
+      }
+      if (!extracted.text || extracted.text.trim().length < 20) {
+        // Fallback: Check if tab is a PDF served without .pdf extension
+        try {
+          const pdfText = await extractPdfTabContent(currentTab.url);
+          if (pdfText && pdfText.length > 40) {
+            extracted = {
+              success: true,
+              text: pdfText,
+              meta: { title: currentTab.title || 'PDF Document', url: currentTab.url },
+              wordCount: countWords(pdfText)
+            };
+          }
+        } catch (_) {}
+      }
     }
 
     if (!extracted.text || extracted.text.trim().length < 20) {
