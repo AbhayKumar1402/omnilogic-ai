@@ -326,6 +326,34 @@ def extract_text_from_image_or_pdf_gemini(raw_bytes: bytes, mime_type: str, file
     return ""
 
 
+def ocr_scanned_pdf_in_batches(pdf_bytes: bytes, pages_per_batch: int = 10, workers: int = 4) -> str:
+    """Scanned PDFs of ANY length: splits into small page batches and runs Gemini Vision OCR on each concurrently."""
+    try:
+        import pypdf
+        from concurrent.futures import ThreadPoolExecutor
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        total = len(reader.pages)
+        batches: List[bytes] = []
+        for start in range(0, total, pages_per_batch):
+            writer = pypdf.PdfWriter()
+            for i in range(start, min(start + pages_per_batch, total)):
+                writer.add_page(reader.pages[i])
+            buf = io.BytesIO()
+            writer.write(buf)
+            batches.append(buf.getvalue())
+
+        def _ocr(idx_batch):
+            idx, data = idx_batch
+            t = extract_text_from_image_or_pdf_gemini(data, "application/pdf", f"batch{idx}.pdf")
+            return f"[Pages {idx * pages_per_batch + 1}-{min((idx + 1) * pages_per_batch, total)}]\n{t}" if t else ""
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(_ocr, enumerate(batches)))
+        return "\n\n".join(r for r in results if r)
+    except Exception:
+        return ""
+
+
 @router.post("/ocr")
 async def extract_ocr_or_pdf(file: UploadFile = File(...), type: Optional[str] = Form(None)):
     """Extracts text from an uploaded PDF, JPG, PNG, WEBP, or text file for Model Training and the Chrome Extension."""
@@ -348,7 +376,12 @@ async def extract_ocr_or_pdf(file: UploadFile = File(...), type: Optional[str] =
             text = pdf_res["text"]
             page_count = pdf_res["page_count"]
             extracted_pages = pdf_res["extracted_pages"]
-            # If scanned PDF without embedded text layer, use Gemini Vision OCR
+            # Scanned / image-only pages (fully or partly): OCR in page batches so ANY length works
+            if page_count > 0 and extracted_pages < page_count * 0.6:
+                import asyncio
+                ocr_text = await asyncio.to_thread(ocr_scanned_pdf_in_batches, raw_bytes)
+                if len(ocr_text) > len(text or ""):
+                    text = ocr_text
             if not text or len(text.strip()) < 30:
                 text = extract_text_from_image_or_pdf_gemini(raw_bytes, "application/pdf", filename)
             if not text or len(text.strip()) < 20:

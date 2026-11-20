@@ -246,7 +246,12 @@ class EfficientSummarizer:
                 f"TARGET SUMMARY FORMAT:\n{snippet_out}\n"
             )
 
-        prompt_context = self._prepare_hierarchical_context(text, max_chars=85000)
+        if len(text) > 60000:
+            prompt_context = await self._condense_large_text(text, mode)
+            if len(prompt_context) > 90000:
+                prompt_context = self._prepare_hierarchical_context(prompt_context, max_chars=90000)
+        else:
+            prompt_context = text
 
         prompt = f"""{system_instruction}
 
@@ -294,7 +299,34 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
             "grounding_exemplars": matched_sources,
         }
 
-    async def _generate(self, prompt: str) -> Optional[str]:
+    async def _condense_large_text(self, text: str, mode: str) -> str:
+        """Map-reduce for documents of ANY size: condenses every chunk (start to end) into key facts, concurrently."""
+        target_chunks = 40
+        chunk_size = min(max(24000, len(text) // target_chunks + 1), 120000)
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        sem = asyncio.Semaphore(4)
+
+        def _extractive(chunk: str) -> str:
+            sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", chunk) if 40 <= len(s.strip()) <= 320]
+            if not sents:
+                return chunk[:600]
+            step = max(len(sents) // 6, 1)
+            return " ".join(sents[::step][:6])
+
+        async def _one(idx: int, chunk: str) -> str:
+            async with sem:
+                p = (
+                    f"Extract the key facts, names, numbers, definitions, and section/chapter/article topics from "
+                    f"part {idx + 1} of {len(chunks)} of a large document. Return dense bullet points (max 180 words). "
+                    f"Ignore navigation noise.\n\n{chunk}"
+                )
+                out = await self._generate(p, max_tokens=500, timeout=40)
+                return f"[Part {idx + 1}/{len(chunks)}] " + (out or _extractive(chunk))
+
+        parts = await asyncio.gather(*[_one(i, c) for i, c in enumerate(chunks)])
+        return "\n\n".join(parts)
+
+    async def _generate(self, prompt: str, max_tokens: int = 1200, timeout: int = 15) -> Optional[str]:
         """Calls Gemini v1beta REST endpoint directly across active models."""
         if not (settings.GOOGLE_API_KEY and settings.GOOGLE_API_KEY.strip()):
             return None
@@ -312,7 +344,7 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "temperature": 0.2,
-                    "maxOutputTokens": 1200,
+                    "maxOutputTokens": max_tokens,
                 },
             }
             req = urllib.request.Request(
@@ -321,7 +353,7 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
                 headers={"Content-Type": "application/json"},
             )
             ctx = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, context=ctx, timeout=14) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 candidates = data.get("candidates", [])
                 if candidates:
@@ -334,7 +366,7 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
             try:
                 res_text = await asyncio.wait_for(
                     asyncio.to_thread(_call_rest, m),
-                    timeout=15.0,
+                    timeout=float(timeout) + 2.0,
                 )
                 if res_text and len(res_text) > 40:
                     return res_text
