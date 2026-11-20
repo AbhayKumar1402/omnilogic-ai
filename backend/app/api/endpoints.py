@@ -21,7 +21,23 @@ router = APIRouter()
 
 def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> Dict[str, Any]:
     """Extracts FULL readable text from all pages of raw PDF bytes using pypdf, PyMuPDF, or pure-Python zlib FlateDecode."""
-    # 1. Try pypdf if installed (extracts ALL pages, e.g., 402+ pages)
+    # 1. PyMuPDF (fitz) first: 20-100x faster than pypdf on large PDFs
+    try:
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        total_pages = len(doc)
+        pages_text = []
+        for idx, page in enumerate(doc):
+            t = page.get_text() or ""
+            if t.strip():
+                pages_text.append(t.strip())
+        joined = "\n\n".join(pages_text).strip()
+        if len(joined) > 40:
+            return {"text": joined, "page_count": total_pages, "extracted_pages": len(pages_text)}
+    except Exception:
+        pass
+
+    # 2. Try pypdf if installed (extracts ALL pages)
     try:
         import pypdf
         reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))

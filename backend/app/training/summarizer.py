@@ -301,10 +301,10 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
 
     async def _condense_large_text(self, text: str, mode: str) -> str:
         """Map-reduce for documents of ANY size: condenses every chunk (start to end) into key facts, concurrently."""
-        target_chunks = 40
-        chunk_size = min(max(24000, len(text) // target_chunks + 1), 120000)
+        target_chunks = 12
+        chunk_size = min(max(24000, len(text) // target_chunks + 1), 200000)
         chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
-        sem = asyncio.Semaphore(4)
+        sem = asyncio.Semaphore(8)
 
         def _extractive(chunk: str) -> str:
             sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", chunk) if 40 <= len(s.strip()) <= 320]
@@ -320,10 +320,17 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
                     f"part {idx + 1} of {len(chunks)} of a large document. Return dense bullet points (max 180 words). "
                     f"Ignore navigation noise.\n\n{chunk}"
                 )
-                out = await self._generate(p, max_tokens=500, timeout=40)
+                out = await self._generate(p, max_tokens=500, timeout=12)
                 return f"[Part {idx + 1}/{len(chunks)}] " + (out or _extractive(chunk))
 
-        parts = await asyncio.gather(*[_one(i, c) for i, c in enumerate(chunks)])
+        tasks = [asyncio.ensure_future(_one(i, c)) for i, c in enumerate(chunks)]
+        done, pending = await asyncio.wait(tasks, timeout=25)
+        for t in pending:
+            t.cancel()
+        parts = [
+            t.result() if t in done and not t.exception() else f"[Part {i + 1}/{len(chunks)}] " + _extractive(chunks[i])
+            for i, t in enumerate(tasks)
+        ]
         return "\n\n".join(parts)
 
     async def _generate(self, prompt: str, max_tokens: int = 1200, timeout: int = 15) -> Optional[str]:
