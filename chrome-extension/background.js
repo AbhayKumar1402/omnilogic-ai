@@ -1,7 +1,7 @@
 // OmniLogic Background Service Worker
 // Handles extension lifecycle events and backend connectivity checks
 
-const BACKEND_URL = 'http://127.0.0.1:8000';
+const BACKEND_URL = 'https://omnilogic-backend.onrender.com';
 
 // Check backend health on install
 chrome.runtime.onInstalled.addListener(async () => {

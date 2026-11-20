@@ -2,7 +2,7 @@
    OmniLogic Chrome Extension — Popup Logic
    ═══════════════════════════════════════════════════════════ */
 
-const BACKEND = 'http://127.0.0.1:8000';
+const BACKEND = 'https://omnilogic-backend.onrender.com';
 
 // ── State ──────────────────────────────────────────────────
 let selectedMode   = 'executive';
@@ -117,11 +117,11 @@ function renderSummary(text) {
 let activeBackend = BACKEND;
 
 async function checkBackend() {
-  for (const host of ['http://127.0.0.1:8000', 'http://localhost:8000']) {
+  for (const host of ['https://omnilogic-backend.onrender.com', 'http://127.0.0.1:8000', 'http://localhost:8000']) {
     try {
       const r = await fetch(`${host}/api/v1/health`, {
         method: 'GET',
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(15000)
       });
       if (r.ok) {
         activeBackend = host;
@@ -184,7 +184,7 @@ async function extractPageContent(tab) {
 
 // ── Call summarizer API ────────────────────────────────────
 async function callSummarizer(text, mode, meta) {
-  for (const host of [activeBackend, 'http://localhost:8000', 'http://127.0.0.1:8000']) {
+  for (const host of [activeBackend, 'https://omnilogic-backend.onrender.com', 'http://127.0.0.1:8000', 'http://localhost:8000']) {
     try {
       const response = await fetch(`${host}/api/v1/summarize`, {
         method: 'POST',
@@ -198,7 +198,7 @@ async function callSummarizer(text, mode, meta) {
             source: 'chrome_extension'
           }
         }),
-        signal: AbortSignal.timeout(25000)
+        signal: AbortSignal.timeout(35000)
       });
 
       if (response.ok) {
