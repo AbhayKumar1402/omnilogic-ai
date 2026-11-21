@@ -15,6 +15,7 @@ import { GroundTruthModal } from "@/components/GroundTruthModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { AccountModal } from "@/components/AccountModal";
 import { AdminAuthModal } from "@/components/AdminAuthModal";
+import { ExtensionPromoPopup } from "@/components/ExtensionPromoPopup";
 import { API_HOSTS } from "@/lib/api";
 
 export type Message = {
@@ -69,6 +70,7 @@ export default function AdminPage() {
   const [isGroundTruthOpen, setIsGroundTruthOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
   const [activeSources, setActiveSources] = useState<string[]>(["sys_arch_v4", "api_schema"]);
 
   useEffect(() => {
@@ -199,6 +201,7 @@ export default function AdminPage() {
         onOpenHistory={() => setActiveTab("archive")}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenAccount={() => setIsAccountOpen(true)}
+        onOpenExtensionModal={() => setIsExtensionModalOpen(true)}
         hasArtifact={!!latestArtifact}
         isAdmin={true}
         onExitAdmin={() => router.push("/")}
@@ -322,6 +325,11 @@ export default function AdminPage() {
         isOpen={isAccountOpen}
         onClose={() => setIsAccountOpen(false)}
         onNavigateTab={(tab) => setActiveTab(tab)}
+      />
+      <ExtensionPromoPopup
+        isModalOpen={isExtensionModalOpen}
+        onOpenModal={() => setIsExtensionModalOpen(true)}
+        onCloseModal={() => setIsExtensionModalOpen(false)}
       />
     </main>
   );

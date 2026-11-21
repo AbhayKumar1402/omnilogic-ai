@@ -9,6 +9,7 @@ interface TopNavProps {
   onOpenHistory?: () => void;
   onOpenSettings?: () => void;
   onOpenAccount?: () => void;
+  onOpenExtensionModal?: () => void;
   hasArtifact?: boolean;
   isAdmin?: boolean;
   onExitAdmin?: () => void;
@@ -21,6 +22,7 @@ export const TopNav = ({
   onOpenHistory,
   onOpenSettings,
   onOpenAccount,
+  onOpenExtensionModal,
   hasArtifact = false,
   isAdmin = false,
   onExitAdmin,
@@ -72,44 +74,63 @@ export const TopNav = ({
             <span className="hidden sm:inline">User View</span>
           </button>
         )}
-        <button
-          onClick={onDeployFix}
-          className={`ghost-glow-btn text-xs sm:text-code-sm font-bold uppercase tracking-wider py-1.5 px-3 sm:py-2 sm:px-4 flex items-center gap-1.5 ${
-            hasArtifact ? "border-secondary text-secondary shadow-[0_0_15px_rgba(123,208,255,0.3)] animate-pulse" : "opacity-75"
-          }`}
-          title="Deploy current resolution artifact"
-        >
-          <span className="material-symbols-outlined text-[16px]">rocket_launch</span>
-          <span className="hidden sm:inline">Deploy Fix</span>
-        </button>
 
-        <button
-          onClick={onGroundTruth}
-          className="slate-glass-btn text-xs sm:text-code-sm font-bold uppercase tracking-wider py-1.5 px-3 sm:py-2 sm:px-4 flex items-center gap-1.5"
-          title="Inspect Ground Truth & Memory Shards"
-        >
-          <span className="material-symbols-outlined text-[16px]">verified</span>
-          <span className="hidden sm:inline">Ground Truth</span>
-        </button>
+        {onOpenExtensionModal && (
+          <button
+            onClick={onOpenExtensionModal}
+            className="text-xs font-bold uppercase tracking-wider py-1.5 px-3 sm:py-2 sm:px-3.5 rounded-xl bg-gradient-to-r from-secondary/20 to-primary/20 hover:from-secondary/30 hover:to-primary/30 border border-secondary/40 text-white shadow-[0_0_15px_rgba(123,208,255,0.2)] transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Download & Add OmniLogic Chrome Extension"
+          >
+            <span className="material-symbols-outlined text-secondary text-[16px]">extension</span>
+            <span className="hidden md:inline">Get Chrome Extension</span>
+            <span className="md:hidden">Extension</span>
+          </button>
+        )}
+
+        {isAdmin && onDeployFix && (
+          <button
+            onClick={onDeployFix}
+            className={`ghost-glow-btn text-xs sm:text-code-sm font-bold uppercase tracking-wider py-1.5 px-3 sm:py-2 sm:px-4 flex items-center gap-1.5 ${
+              hasArtifact ? "border-secondary text-secondary shadow-[0_0_15px_rgba(123,208,255,0.3)] animate-pulse" : "opacity-75"
+            }`}
+            title="Deploy current resolution artifact"
+          >
+            <span className="material-symbols-outlined text-[16px]">rocket_launch</span>
+            <span className="hidden sm:inline">Deploy Fix</span>
+          </button>
+        )}
+
+        {isAdmin && onGroundTruth && (
+          <button
+            onClick={onGroundTruth}
+            className="slate-glass-btn text-xs sm:text-code-sm font-bold uppercase tracking-wider py-1.5 px-3 sm:py-2 sm:px-4 flex items-center gap-1.5"
+            title="Inspect Ground Truth & Memory Shards"
+          >
+            <span className="material-symbols-outlined text-[16px]">verified</span>
+            <span className="hidden sm:inline">Ground Truth</span>
+          </button>
+        )}
 
         <div className="flex items-center gap-1 sm:gap-2 border-l border-white/10 pl-2 sm:pl-3">
-          <button
-            onClick={onOpenHistory}
-            className="p-2 text-on-surface-variant hover:text-primary rounded-lg hover:bg-white/5 transition-colors"
-            title="Mission History & Archive"
-          >
-            <span className="material-symbols-outlined text-[20px]">history</span>
-          </button>
+          {isAdmin && onOpenHistory && (
+            <button
+              onClick={onOpenHistory}
+              className="p-2 text-on-surface-variant hover:text-primary rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+              title="Mission History & Archive"
+            >
+              <span className="material-symbols-outlined text-[20px]">history</span>
+            </button>
+          )}
           <button
             onClick={onOpenSettings}
-            className="p-2 text-on-surface-variant hover:text-primary rounded-lg hover:bg-white/5 transition-colors"
+            className="p-2 text-on-surface-variant hover:text-primary rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
             title="System Configuration & Keys"
           >
             <span className="material-symbols-outlined text-[20px]">settings</span>
           </button>
           <button
             onClick={onOpenAccount}
-            className="p-2 text-on-surface-variant hover:text-primary rounded-lg hover:bg-white/5 transition-colors"
+            className="p-2 text-on-surface-variant hover:text-primary rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
             title="Account & Session Status"
           >
             <span className="material-symbols-outlined text-[20px]">account_circle</span>
