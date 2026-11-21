@@ -30,7 +30,8 @@ class TrainingJobState:
             "rouge1": 0.912,
             "rouge2": 0.824,
             "rougeL": 0.895,
-            "compression_efficiency": 0.942,
+            "compression_ratio": 0.214,
+            "compression_efficiency": 0.786,
         }
         self.indexed_exemplars: int = len(dataset_manager.examples)
         self.model_version: str = "OmniLogic-Summarizer-v1.4"
@@ -119,11 +120,13 @@ class ModelTrainer:
             avg_r2 = round(sum(m["rouge2"] for m in eval_metrics) / len(eval_metrics), 3)
             avg_rl = round(sum(m["rougeL"] for m in eval_metrics) / len(eval_metrics), 3)
 
+            avg_comp_ratio = round(sum(m["compression_ratio"] for m in eval_metrics) / max(len(eval_metrics), 1), 3)
             self.state.metrics = {
                 "rouge1": avg_r1,
                 "rouge2": avg_r2,
                 "rougeL": avg_rl,
-                "compression_efficiency": round(1.0 - (sum(m["compression_ratio"] for m in eval_metrics) / len(eval_metrics)), 3),
+                "compression_ratio": avg_comp_ratio,
+                "compression_efficiency": round(1.0 - avg_comp_ratio, 3),
             }
 
             self.state.progress = 100.0

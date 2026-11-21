@@ -86,7 +86,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
     status: "completed",
     progress: 100,
     current_loss: 0.245,
-    metrics: { rouge1: 0.912, rouge2: 0.824, rougeL: 0.895, compression_efficiency: 0.942 },
+    metrics: { rouge1: 0.912, rouge2: 0.824, rougeL: 0.895, compression_ratio: 0.214, compression_efficiency: 0.786 },
     indexed_exemplars: 4,
     model_version: "OmniLogic-Summarizer-v1.4",
     loss_history: [
@@ -395,7 +395,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
             status: "completed",
             progress: 100,
             current_loss: 0.198,
-            metrics: { rouge1: 0.934, rouge2: 0.852, rougeL: 0.918, compression_efficiency: 0.956 },
+            metrics: { rouge1: 0.934, rouge2: 0.852, rougeL: 0.918, compression_ratio: 0.205, compression_efficiency: 0.795 },
           }));
         }
       }, 400);
@@ -623,9 +623,13 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
             Compression Ratio
           </span>
           <span className="text-xl sm:text-2xl font-bold font-mono text-primary">
-            {trainingStatus.metrics?.compression_efficiency ?? 0.942}
+            {trainingStatus.metrics?.compression_ratio ?? 0.214}
           </span>
-          <span className="text-[10px] text-primary/80 block mt-0.5">Entity Preservation</span>
+          <span className="text-[10px] text-primary/80 block mt-0.5">
+            {trainingStatus.metrics?.compression_ratio
+              ? `${Math.round(trainingStatus.metrics.compression_ratio * 100)}% Length (${Math.round((1 - trainingStatus.metrics.compression_ratio) * 100)}% Fluff Cut)`
+              : "21% Length (79% Fluff Cut)"}
+          </span>
         </div>
 
         <div className="obsidian-panel glass-pane rounded-2xl p-4 border border-white/10">
