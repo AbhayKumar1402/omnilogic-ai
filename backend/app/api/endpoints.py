@@ -181,6 +181,7 @@ class SummarizeResponse(BaseModel):
     bullets: List[str]
     metrics: Dict[str, Any]
     grounding_exemplars: List[str]
+    extracted_text: Optional[str] = None
 
 # --- Training Schemas ---
 class TrainRequest(BaseModel):
@@ -269,29 +270,63 @@ async def run_summarizer(request: SummarizeRequest):
 @router.post("/summarize/url", response_model=SummarizeResponse)
 async def summarize_url(request: SummarizeUrlRequest):
     import ssl
+    raw_url = (request.url or "").strip()
+    if not raw_url:
+        raise HTTPException(status_code=400, detail="URL cannot be empty.")
+    
+    target_url = raw_url if raw_url.startswith(("http://", "https://")) else f"https://{raw_url}"
+    clean = ""
+    fetch_err_msg = ""
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Upgrade-Insecure-Requests": "1",
+    }
+    ctx = ssl._create_unverified_context()
+
+    # Tier 1: Direct HTTP / HTTPS fetch with browser headers
     try:
-        req = urllib.request.Request(
-            request.url,
-            headers={"User-Agent": "Mozilla/5.0 (OmniLogic AI Summarizer/1.0)"}
-        )
-        ctx = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+        req = urllib.request.Request(target_url, headers=headers)
+        with urllib.request.urlopen(req, context=ctx, timeout=12) as resp:
             content_type = (resp.headers.get("Content-Type") or "").lower()
             raw_bytes = resp.read()
 
-        if "application/pdf" in content_type or raw_bytes[:5] == b"%PDF-" or request.url.lower().split("?")[0].endswith(".pdf"):
+        if "application/pdf" in content_type or raw_bytes[:5] == b"%PDF-" or target_url.lower().split("?")[0].endswith(".pdf"):
             pdf_res = extract_text_from_pdf_bytes(raw_bytes)
-            clean = pdf_res["text"]
+            clean = pdf_res.get("text", "")
         else:
             raw_html = raw_bytes.decode("utf-8", errors="ignore")
-            clean = re.sub(r"<(script|style|noscript|nav|footer|header)[^>]*>.*?</\1>", " ", raw_html, flags=re.S | re.I)
+            # Strip noise elements (script, style, noscript, nav, footer, header, aside, svg, button)
+            clean = re.sub(r"<(script|style|noscript|nav|footer|header|aside|svg|button)[^>]*>.*?</\1>", " ", raw_html, flags=re.S | re.I)
             clean = re.sub(r"<[^>]+>", " ", clean)
             clean = re.sub(r"\s+", " ", clean).strip()
+    except Exception as e:
+        fetch_err_msg = str(e)
 
-        if len(clean) < 40:
-            clean = f"Document content from {request.url}"
-    except Exception as fetch_err:
-        clean = f"Live document summary request for {request.url}. (Note: Direct fetch fallback activated: {fetch_err})"
+    # Tier 2: Resilient Reader Fallback (for SPAs, Medium, StackOverflow, Cloudflare-protected sites)
+    if len(clean) < 120:
+        try:
+            reader_url = f"https://r.jina.ai/{target_url}"
+            req2 = urllib.request.Request(reader_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req2, context=ctx, timeout=15) as resp2:
+                reader_text = resp2.read().decode("utf-8", errors="ignore")
+                if len(reader_text.strip()) > len(clean):
+                    clean = reader_text.strip()
+        except Exception as e2:
+            if not fetch_err_msg:
+                fetch_err_msg = str(e2)
+
+    # If completely empty or blocked, inform the user rather than hallucinating
+    if len(clean) < 60:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unable to extract readable text from '{target_url}'. The page may require a login, have an anti-bot check, or be unreachable ({fetch_err_msg or 'empty response'}). Please copy and paste the article text directly, or summarize it using the OmniLogic Chrome Extension."
+        )
 
     result = await summarizer.summarize(
         text=clean,
@@ -311,7 +346,8 @@ async def summarize_url(request: SummarizeUrlRequest):
         result=summary_str,
         bullets=bullets,
         metrics=result["metrics"],
-        grounding_exemplars=result["grounding_exemplars"]
+        grounding_exemplars=result["grounding_exemplars"],
+        extracted_text=clean[:3000]
     )
 
 

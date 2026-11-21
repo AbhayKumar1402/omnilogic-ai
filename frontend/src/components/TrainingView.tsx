@@ -467,23 +467,40 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
   const handleSummarizeUrl = async () => {
     if (!urlInput.trim()) return;
     setIsSummarizing(true);
-    try {
-      const res = await fetch(`${PRIMARY_API_URL}/api/v1/summarize/url`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: urlInput.trim(), mode: selectedMode }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSummaryResult(data);
-        setIsSummarizing(false);
-        return;
+    setSummaryResult(null);
+
+    let lastErrorMessage = "";
+    for (const host of API_HOSTS) {
+      try {
+        const res = await fetch(`${host}/api/v1/summarize/url`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: urlInput.trim(), mode: selectedMode }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.extracted_text) {
+            setInputText(data.extracted_text);
+          }
+          setSummaryResult(data);
+          setIsSummarizing(false);
+          return;
+        } else {
+          const errData = await res.json().catch(() => null);
+          if (errData?.detail) {
+            lastErrorMessage = errData.detail;
+          }
+        }
+      } catch (e: any) {
+        lastErrorMessage = e?.message || "";
       }
-    } catch (e) {
-      console.warn("Backend URL summarizer fallback.");
     }
-    setInputText(`Live Web Page Analysis for ${urlInput.trim()}: Real-time DOM extraction captured key headings, technical documentation blocks, and primary article content for high-density compression.`);
-    setTimeout(() => handleRunSummarizer(), 200);
+
+    setIsSummarizing(false);
+    alert(
+      lastErrorMessage ||
+      `Could not retrieve text from "${urlInput}". The website may require login authentication or have bot-protection. Please copy the article text and paste it into the box below, or use the OmniLogic Chrome Extension on the active tab.`
+    );
   };
 
   const handleAddExample = async () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { PRIMARY_API_URL } from "@/lib/api";
+import { PRIMARY_API_URL, API_HOSTS } from "@/lib/api";
 
 interface UserSummarizerViewProps {
   onOpenAdminLogin?: () => void;
@@ -92,22 +92,38 @@ export const UserSummarizerView = ({ onOpenAdminLogin }: UserSummarizerViewProps
     setIsSummarizing(true);
     setSummaryResult(null);
 
-    try {
-      const res = await fetch(`${PRIMARY_API_URL}/api/v1/summarize/url`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: urlInput.trim(), mode: selectedMode }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSummaryResult(data);
-        setIsSummarizing(false);
-        return;
+    let lastErrorMessage = "";
+    for (const host of API_HOSTS) {
+      try {
+        const res = await fetch(`${host}/api/v1/summarize/url`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: urlInput.trim(), mode: selectedMode }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.extracted_text) {
+            setInputText(data.extracted_text);
+          }
+          setSummaryResult(data);
+          setIsSummarizing(false);
+          return;
+        } else {
+          const errData = await res.json().catch(() => null);
+          if (errData?.detail) {
+            lastErrorMessage = errData.detail;
+          }
+        }
+      } catch (e: any) {
+        lastErrorMessage = e?.message || "";
       }
-    } catch (_) {}
+    }
 
-    setInputText(`Analysis of ${urlInput.trim()}`);
-    handleRunSummarize(`Analysis of ${urlInput.trim()}`);
+    setIsSummarizing(false);
+    alert(
+      lastErrorMessage ||
+      `Could not retrieve text from "${urlInput}". The website may require login authentication or have bot protection. Please copy the article text and paste it into the box below, or use the OmniLogic Chrome Extension on the active tab.`
+    );
   };
 
   const handleFileUpload = async (file: File) => {
