@@ -18,6 +18,7 @@ def sanitize_text(text: str) -> str:
     if not text:
         return ""
 
+    raw_input = text
     # 0. Remove Google Search / AI Mode UI noise lines and raw table/nav noise
     noise_patterns = [
         r"^AI Mode conversation:.*$",
@@ -43,19 +44,15 @@ def sanitize_text(text: str) -> str:
         ).strip()
         if not trimmed:
             continue
-        if "\t" in line or line.count("|") >= 2:
-            continue
-        date_matches = len(re.findall(r"\b\d{4}\b", trimmed))
-        if date_matches >= 2 and not any(
-            v in trimmed.lower()
-            for v in [
-                "was", "is", "reigned", "ruled", "founded", "born", "died",
-                "established", "built", "expanded", "celebrated", "held", "took", "contained",
-            ]
-        ):
+        # Drop only short markdown divider rows like |---|---|
+        if len(trimmed) < 100 and re.match(r"^\|?[\s:-]+\|[\s:-|]+$", trimmed):
             continue
         clean_lines.append(trimmed)
-    text = "\n".join(clean_lines)
+
+    if not clean_lines or len("\n".join(clean_lines).strip()) < 30:
+        text = raw_input.strip()
+    else:
+        text = "\n".join(clean_lines)
 
     # 1. Join "Article 14. Guarantees..." -> "Article 14: Guarantees..." so sentence splitting never drops "Article 14"
     text = re.sub(

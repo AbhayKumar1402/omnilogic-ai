@@ -239,9 +239,23 @@ async def run_summarizer(request: SummarizeRequest):
             or request.content
             or request.pageText
             or request.page_text
-            or (f"Webpage content from {request.url}" if request.url else "")
+            or ""
+        ).strip()
+
+        # Auto-detect URL input: if the user passed only a web URL (in text, content, or url field)
+        # automatically fetch the live page content!
+        candidate_url = request.url if request.url else (
+            raw_text
+            if len(raw_text.splitlines()) <= 2
+            and len(raw_text.split()) == 1
+            and (raw_text.startswith(("http://", "https://")) or bool(re.match(r"^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(/.*)?$", raw_text)))
+            else None
         )
-        if not raw_text or not raw_text.strip():
+
+        if candidate_url:
+            return await summarize_url(SummarizeUrlRequest(url=candidate_url, mode=request.mode, max_words=request.max_words))
+
+        if not raw_text:
             raw_text = "Document content provided for summarization."
 
         result = await summarizer.summarize(
@@ -301,10 +315,13 @@ async def summarize_url(request: SummarizeUrlRequest):
             clean = pdf_res.get("text", "")
         else:
             raw_html = raw_bytes.decode("utf-8", errors="ignore")
-            # Strip noise elements (script, style, noscript, nav, footer, header, aside, svg, button)
-            clean = re.sub(r"<(script|style|noscript|nav|footer|header|aside|svg|button)[^>]*>.*?</\1>", " ", raw_html, flags=re.S | re.I)
+            # Strip noise elements (script, style, noscript, nav, footer, header, aside, svg, button, iframe)
+            clean = re.sub(r"<(script|style|noscript|nav|footer|header|aside|svg|button|iframe)[^>]*>.*?</\1>", " ", raw_html, flags=re.S | re.I)
+            clean = re.sub(r"</?(p|div|h[1-6]|li|tr|blockquote|section|article)[^>]*>", "\n", clean, flags=re.I)
+            clean = re.sub(r"<br\s*/?>", "\n", clean, flags=re.I)
             clean = re.sub(r"<[^>]+>", " ", clean)
-            clean = re.sub(r"\s+", " ", clean).strip()
+            p_lines = [re.sub(r"[ \t]+", " ", l).strip() for l in clean.splitlines()]
+            clean = "\n\n".join(l for l in p_lines if l)
     except Exception as e:
         fetch_err_msg = str(e)
 

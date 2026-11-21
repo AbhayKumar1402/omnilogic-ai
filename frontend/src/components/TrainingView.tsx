@@ -407,7 +407,19 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
   };
 
   const handleRunSummarizer = async () => {
-    if (!inputText.trim()) return;
+    const text = inputText.trim();
+    if (!text) return;
+
+    // Auto-detect if user pasted a single URL link instead of raw text
+    const isSingleUrl =
+      (text.startsWith("http://") || text.startsWith("https://") || /^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(text)) &&
+      text.split(/\s+/).length === 1;
+    if (isSingleUrl) {
+      setUrlInput(text);
+      await handleSummarizeUrl(text);
+      return;
+    }
+
     setIsSummarizing(true);
     try {
       const res = await fetch(`${PRIMARY_API_URL}/api/v1/summarize`, {
@@ -464,8 +476,9 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
     }, 700);
   };
 
-  const handleSummarizeUrl = async () => {
-    if (!urlInput.trim()) return;
+  const handleSummarizeUrl = async (overrideUrl?: string) => {
+    const target = (overrideUrl || urlInput).trim();
+    if (!target) return;
     setIsSummarizing(true);
     setSummaryResult(null);
 
@@ -475,7 +488,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
         const res = await fetch(`${host}/api/v1/summarize/url`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: urlInput.trim(), mode: selectedMode }),
+          body: JSON.stringify({ url: target, mode: selectedMode }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -499,7 +512,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
     setIsSummarizing(false);
     alert(
       lastErrorMessage ||
-      `Could not retrieve text from "${urlInput}". The website may require login authentication or have bot-protection. Please copy the article text and paste it into the box below, or use the OmniLogic Chrome Extension on the active tab.`
+      `Could not retrieve text from "${target}". The website may require login authentication or have bot protection. Please copy the article text and paste it into the box below, or use the OmniLogic Chrome Extension on the active tab.`
     );
   };
 
@@ -752,7 +765,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
                 Upload PDF / JPG / PNG
               </button>
               <button
-                onClick={handleSummarizeUrl}
+                onClick={() => handleSummarizeUrl()}
                 disabled={isSummarizing || !urlInput.trim()}
                 className="slate-glass-btn text-xs font-bold uppercase py-1.5 px-3.5 flex items-center gap-1.5 disabled:opacity-40 whitespace-nowrap cursor-pointer"
               >
