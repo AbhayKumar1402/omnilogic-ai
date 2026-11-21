@@ -216,36 +216,57 @@ export default function AdminPage() {
         onOpenSupport={() => setIsSettingsOpen(true)}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Symmetrically Centered across the whole viewport */}
       <div
-        className={`flex-1 ml-0 md:ml-64 pt-20 sm:pt-24 px-4 sm:px-6 md:px-8 flex flex-col items-center w-full min-w-0 ${
+        className={`flex-1 pt-20 sm:pt-24 px-4 sm:px-6 md:px-8 flex flex-col items-center w-full min-w-0 ${
           activeTab === "new" ? "pb-36 sm:pb-40" : "pb-12"
         }`}
       >
+        {/* Admin Navigation Header Ribbon */}
+        <div className="w-full max-w-5xl mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center shadow-[0_0_15px_rgba(221,183,255,0.2)]">
+              <span className="material-symbols-outlined text-primary text-[19px]">admin_panel_settings</span>
+            </div>
+            <div>
+              <h2 className="font-h1 text-[15px] font-bold text-white leading-tight">Admin Command Center</h2>
+              <p className="text-[11px] font-mono uppercase tracking-wider text-on-surface-variant/70">
+                Cognitive Engine & Fine-Tuning Lab
+              </p>
+            </div>
+          </div>
+
+          {/* Module Switcher Pills */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-black/60 p-1.5 rounded-xl border border-white/10">
+            {[
+              { id: "train", label: "Model Training", icon: "model_training" },
+              { id: "new", label: "Solver Terminal", icon: "terminal" },
+              { id: "kb", label: "Knowledge Base", icon: "database" },
+              { id: "streams", label: "Logic Streams", icon: "account_tree" },
+              { id: "archive", label: "Archive", icon: "inventory_2" },
+            ].map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isActive
+                      ? "bg-secondary text-black font-bold shadow-[0_0_12px_rgba(123,208,255,0.4)]"
+                      : "text-on-surface-variant hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">{tab.icon}</span>
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* VIEW 1: Solver */}
         {activeTab === "new" && (
           <div className="w-full max-w-5xl flex flex-col items-center">
-            <div className="w-full flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-white/10 pb-4 mb-6">
-              <div>
-                <h1 className="text-xl sm:text-2xl font-h1 font-bold text-white flex items-center gap-2">
-                  <span className="material-symbols-outlined text-secondary">terminal</span>
-                  Administrator Solver Workspace
-                </h1>
-                <p className="text-xs sm:text-sm text-on-surface-variant mt-0.5">
-                  LangGraph Multi-Agent Orchestration & Core Graph Pipeline
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setActiveTab("train")}
-                  className="slate-glass-btn text-xs font-bold uppercase tracking-wider py-2 px-3.5 flex items-center gap-1.5"
-                >
-                  <span className="material-symbols-outlined text-primary text-[16px]">model_training</span>
-                  <span>Model Training Lab</span>
-                </button>
-              </div>
-            </div>
-
             <ChatArea
               messages={messages}
               isLoading={isLoading}

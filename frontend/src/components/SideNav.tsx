@@ -162,37 +162,29 @@ export const SideNav = ({
   );
 
   return (
-    <>
-      {/* Desktop Persistent Sidebar */}
-      <aside className="hidden md:flex fixed left-0 top-0 h-full z-40">
-        {navContent}
-      </aside>
-
-      {/* Mobile Slide-Over Drawer */}
-      <AnimatePresence>
-        {isOpenMobile && (
-          <div className="md:hidden fixed inset-0 z-50 flex">
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={onCloseMobile}
-              className="fixed inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            {/* Drawer */}
-            <motion.aside
-              initial={{ x: -280 }}
-              animate={{ x: 0 }}
-              exit={{ x: -280 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="relative z-10 h-full shadow-2xl"
-            >
-              {navContent}
-            </motion.aside>
-          </div>
-        )}
-      </AnimatePresence>
-    </>
+    <AnimatePresence>
+      {isOpenMobile && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onCloseMobile}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm"
+          />
+          {/* Drawer */}
+          <motion.aside
+            initial={{ x: -280 }}
+            animate={{ x: 0 }}
+            exit={{ x: -280 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="relative z-10 h-full shadow-2xl"
+          >
+            {navContent}
+          </motion.aside>
+        </div>
+      )}
+    </AnimatePresence>
   );
 };

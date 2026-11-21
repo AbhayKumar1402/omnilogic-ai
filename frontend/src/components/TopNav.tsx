@@ -29,13 +29,16 @@ export const TopNav = ({
     <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-4 sm:px-6 md:px-8 h-16 bg-surface/70 backdrop-blur-xl border-b border-white/10">
       {/* Brand & Mobile Hamburger */}
       <div className="flex items-center gap-3">
-        <button
-          onClick={onToggleMobileMenu}
-          className="md:hidden p-2 text-on-surface-variant hover:text-white rounded-lg hover:bg-white/5 transition-colors"
-          aria-label="Toggle navigation menu"
-        >
-          <span className="material-symbols-outlined text-[24px]">menu</span>
-        </button>
+        {onToggleMobileMenu && (
+          <button
+            onClick={onToggleMobileMenu}
+            className="p-2 text-on-surface-variant hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+            aria-label="Toggle navigation drawer"
+            title="Open Menu Drawer"
+          >
+            <span className="material-symbols-outlined text-[24px]">menu</span>
+          </button>
+        )}
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-[0_0_15px_rgba(221,183,255,0.4)]">
             <span className="material-symbols-outlined text-black text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>
