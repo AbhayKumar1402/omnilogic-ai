@@ -234,6 +234,24 @@ class DatasetManager:
         self.save_dataset()
         return ex
 
+    def delete_example(self, example_id: str) -> bool:
+        """Deletes an exemplar by its ID from memory and disk."""
+        initial_len = len(self.examples)
+        self.examples = [ex for ex in self.examples if ex.id != example_id]
+        if len(self.examples) < initial_len:
+            self.save_dataset()
+            return True
+        return False
+
+    def update_example_category(self, example_id: str, new_category: str) -> Optional[TrainingExample]:
+        """Updates the category of an exemplar (e.g. from technical to scientific_academic)."""
+        for ex in self.examples:
+            if ex.id == example_id:
+                ex.category = new_category
+                self.save_dataset()
+                return ex
+        return None
+
     def export_gemini_format(self) -> List[Dict[str, Any]]:
         """Exports examples into Google Gemini fine-tuning JSON format."""
         formatted = []

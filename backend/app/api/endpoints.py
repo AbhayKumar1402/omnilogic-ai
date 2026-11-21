@@ -193,6 +193,9 @@ class DatasetAddRequest(BaseModel):
     target_summary: str
     key_entities: Optional[List[str]] = None
 
+class DatasetUpdateRequest(BaseModel):
+    category: str
+
 class AutoGeneratePairRequest(BaseModel):
     input_text: str
     category: Optional[str] = "executive"
@@ -542,6 +545,32 @@ async def add_dataset_example(request: DatasetAddRequest):
             key_entities=request.key_entities
         )
         return {"status": "success", "example": ex.model_dump()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/train/dataset/{example_id}")
+async def delete_dataset_example(example_id: str):
+    """Deletes an exemplar from the training dataset by ID."""
+    try:
+        deleted = dataset_manager.delete_example(example_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Exemplar {example_id} not found")
+        return {"status": "success", "message": f"Deleted exemplar {example_id}", "remaining": len(dataset_manager.examples)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/train/dataset/{example_id}")
+async def update_dataset_example(example_id: str, request: DatasetUpdateRequest):
+    """Updates the category/stream of an exemplar (e.g. from technical to scientific_academic)."""
+    try:
+        updated = dataset_manager.update_example_category(example_id, request.category)
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Exemplar {example_id} not found")
+        return {"status": "success", "example": updated.model_dump(), "message": f"Updated exemplar {example_id} to category [{request.category}]"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

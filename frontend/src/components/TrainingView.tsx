@@ -497,6 +497,35 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
     setShowAddForm(false);
   };
 
+  const handleDeleteExample = async (exampleId: string) => {
+    if (!confirm(`Are you sure you want to delete exemplar [${exampleId}]?`)) return;
+    try {
+      await fetch(`${PRIMARY_API_URL}/api/v1/train/dataset/${exampleId}`, {
+        method: "DELETE",
+      });
+      fetchDataset();
+    } catch (e) {
+      // Local optimistic update
+      setDataset((prev) => prev.filter((item) => item.id !== exampleId));
+    }
+  };
+
+  const handleUpdateCategory = async (exampleId: string, newCat: string) => {
+    try {
+      await fetch(`${PRIMARY_API_URL}/api/v1/train/dataset/${exampleId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: newCat }),
+      });
+      fetchDataset();
+    } catch (e) {
+      // Local optimistic update
+      setDataset((prev) =>
+        prev.map((item) => (item.id === exampleId ? { ...item, category: newCat } : item))
+      );
+    }
+  };
+
   return (
     <div className="w-full max-w-5xl space-y-6">
       {/* Header */}
@@ -987,14 +1016,47 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
                 },
               ]
           ).map((item: any, idx: number) => (
-            <div key={idx} className="p-4 bg-black/50 rounded-xl border border-white/5 space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-mono font-bold text-secondary">
-                  {item.id} [{item.category}]
-                </span>
-                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  Gold Exemplar
-                </span>
+            <div key={idx} className="p-4 bg-black/50 rounded-xl border border-white/5 space-y-2 hover:border-white/15 transition-all">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold text-secondary">
+                    {item.id}
+                  </span>
+                  
+                  {/* Category switcher to change topic stream on the fly */}
+                  <select
+                    value={item.category}
+                    onChange={(e) => handleUpdateCategory(item.id, e.target.value)}
+                    title="Change topic category stream"
+                    className="bg-[#18181b] border border-white/15 text-[11px] font-mono text-primary rounded px-2 py-0.5 outline-none hover:border-primary cursor-pointer transition-colors"
+                  >
+                    <option value="technical">Technical</option>
+                    <option value="executive">Executive</option>
+                    <option value="architecture">Architecture</option>
+                    <option value="chain_of_density">Chain of Density</option>
+                    <option value="actionable">Action Items</option>
+                    <option value="finance_product">Finance & Product Reviews</option>
+                    <option value="narrative_history">Long-Form Narrative & History</option>
+                    <option value="meetings_dialogue">Meetings & Dialogue</option>
+                    <option value="scientific_academic">Scientific & Academic</option>
+                    <option value="legal_governance">Legal, Policy & Governance</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                    Gold Exemplar
+                  </span>
+                  
+                  {/* Delete Button */}
+                  <button
+                    onClick={() => handleDeleteExample(item.id)}
+                    className="p-1 rounded text-red-400/70 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all cursor-pointer"
+                    title={`Delete exemplar ${item.id}`}
+                  >
+                    <span className="material-symbols-outlined text-[15px] block">delete</span>
+                  </button>
+                </div>
               </div>
               <p className="text-xs text-on-surface-variant line-clamp-2">{item.input_text}</p>
               <div className="p-2.5 rounded-lg bg-surface-variant/30 text-xs text-white font-mono whitespace-pre-wrap">
