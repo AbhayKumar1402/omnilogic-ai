@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { PRIMARY_API_URL, API_HOSTS } from "@/lib/api";
 
 interface UserSummarizerViewProps {
@@ -14,6 +14,22 @@ export const UserSummarizerView = ({ onOpenAdminLogin }: UserSummarizerViewProps
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summaryResult, setSummaryResult] = useState<any>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const sharedUrl = params.get("url");
+      const sharedText = params.get("text");
+      if (sharedText && sharedText.trim().length > 40) {
+        setInputText(sharedText.trim());
+        handleRunSummarize(sharedText.trim());
+      } else if (sharedUrl && sharedUrl.trim()) {
+        setUrlInput(sharedUrl.trim());
+        handleSummarizeUrl(sharedUrl.trim());
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const MODES = [
     { id: "executive", label: "Executive", desc: "Core takeaways & strategic impact" },
