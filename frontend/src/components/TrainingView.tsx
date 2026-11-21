@@ -340,13 +340,32 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
       if (res.ok) {
         const data = await res.json();
         setDataset(data);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("omnilogic_exemplars_cache", JSON.stringify(data));
+        }
       }
     } catch (e) {
       console.warn("Backend dataset fetch fallback.");
+      if (typeof window !== "undefined") {
+        const cached = localStorage.getItem("omnilogic_exemplars_cache");
+        if (cached) {
+          try {
+            setDataset(JSON.parse(cached));
+          } catch (err) {}
+        }
+      }
     }
   };
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const cached = localStorage.getItem("omnilogic_exemplars_cache");
+      if (cached) {
+        try {
+          setDataset(JSON.parse(cached));
+        } catch (err) {}
+      }
+    }
     fetchStatus();
     fetchDataset();
   }, []);
@@ -480,6 +499,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
         }),
       });
       fetchDataset();
+      fetchStatus();
     } catch (e) {
       setDataset((prev) => [
         {
@@ -504,6 +524,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
         method: "DELETE",
       });
       fetchDataset();
+      fetchStatus();
     } catch (e) {
       // Local optimistic update
       setDataset((prev) => prev.filter((item) => item.id !== exampleId));
@@ -518,6 +539,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
         body: JSON.stringify({ category: newCat }),
       });
       fetchDataset();
+      fetchStatus();
     } catch (e) {
       // Local optimistic update
       setDataset((prev) =>
@@ -611,7 +633,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
             Trained Exemplars
           </span>
           <span className="text-xl sm:text-2xl font-bold font-mono text-white">
-            {trainingStatus.indexed_exemplars ?? 4}
+            {dataset.length > 0 ? dataset.length : (trainingStatus.indexed_exemplars ?? 14)}
           </span>
           <span className="text-[10px] text-on-surface-variant/60 block mt-0.5">Vector Anchors</span>
         </div>
@@ -789,7 +811,7 @@ export const TrainingView = ({ onBackToChat }: TrainingViewProps) => {
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <span className="material-symbols-outlined text-primary text-[20px]">school</span>
-              Training Dataset ({dataset.length || 4} Golden Exemplars)
+              Training Dataset ({dataset.length > 0 ? dataset.length : (trainingStatus.indexed_exemplars ?? 14)} Golden Exemplars)
             </h2>
             <p className="text-xs text-on-surface-variant mt-0.5">
               Grounding pairs used for associative few-shot retrieval and Gemini fine-tuning.

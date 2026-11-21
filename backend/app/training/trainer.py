@@ -42,6 +42,7 @@ class ModelTrainer:
         self.state = TrainingJobState()
 
     def get_status(self) -> Dict[str, Any]:
+        self.state.indexed_exemplars = len(dataset_manager.examples)
         return {
             "job_id": self.state.job_id,
             "status": self.state.status,
