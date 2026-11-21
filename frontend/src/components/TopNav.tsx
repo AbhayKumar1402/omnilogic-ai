@@ -10,6 +10,8 @@ interface TopNavProps {
   onOpenSettings?: () => void;
   onOpenAccount?: () => void;
   hasArtifact?: boolean;
+  isAdmin?: boolean;
+  onExitAdmin?: () => void;
 }
 
 export const TopNav = ({
@@ -20,6 +22,8 @@ export const TopNav = ({
   onOpenSettings,
   onOpenAccount,
   hasArtifact = false,
+  isAdmin = false,
+  onExitAdmin,
 }: TopNavProps) => {
   return (
     <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-4 sm:px-6 md:px-8 h-16 bg-surface/70 backdrop-blur-xl border-b border-white/10">
@@ -44,11 +48,27 @@ export const TopNav = ({
           <span className="hidden sm:inline-block px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest rounded-full bg-primary/10 border border-primary/20 text-primary">
             v4.2 Active
           </span>
+          {isAdmin && (
+            <span className="px-2 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest rounded-full bg-red-500/15 border border-red-500/30 text-red-400 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+              Admin
+            </span>
+          )}
         </div>
       </div>
 
       {/* Action Controls */}
       <div className="flex items-center gap-2 sm:gap-3">
+        {isAdmin && onExitAdmin && (
+          <button
+            onClick={onExitAdmin}
+            className="text-xs font-mono text-on-surface-variant hover:text-white px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-1 cursor-pointer"
+            title="Return to Public User Portal"
+          >
+            <span className="material-symbols-outlined text-[15px]">arrow_back</span>
+            <span className="hidden sm:inline">User View</span>
+          </button>
+        )}
         <button
           onClick={onDeployFix}
           className={`ghost-glow-btn text-xs sm:text-code-sm font-bold uppercase tracking-wider py-1.5 px-3 sm:py-2 sm:px-4 flex items-center gap-1.5 ${

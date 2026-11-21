@@ -144,7 +144,7 @@ export const ChatArea = ({ messages, isLoading, onInspectSource }: ChatAreaProps
                   <span className="material-symbols-outlined text-[13px]">database</span>
                   Grounded In:
                 </span>
-                {msg.sources.map((source, sIdx) => (
+                {msg.sources.map((source: string, sIdx: number) => (
                   <button
                     key={sIdx}
                     onClick={() => onInspectSource && onInspectSource(source)}
