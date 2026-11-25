@@ -178,15 +178,17 @@ function autoDetectTopicCategory(text = '', title = '', url = '') {
   return bestCat;
 }
 
-function updateDetectedCategoryUI(cat, isManual = false) {
+function updateDetectedCategoryUI(cat, isManual = false, isPending = false) {
   detectedMode = cat;
   const labelEl = document.getElementById('detectedCategoryLabel');
   const badgeEl = document.getElementById('autoDetectBadge');
   if (labelEl) {
-    labelEl.textContent = formatMode(cat);
+    labelEl.textContent = isPending ? 'AI Auto-Detect (On Summarize)' : formatMode(cat);
   }
   if (badgeEl) {
-    badgeEl.textContent = isManual ? '⚙️ Manual Override' : '✨ Auto-Recognized';
+    badgeEl.textContent = isManual
+      ? '⚙️ Manual Override'
+      : (isPending ? '✨ Simultaneous AI' : '🎯 Determined by AI');
   }
 }
 
@@ -591,26 +593,34 @@ async function runSummarize() {
 
     extractedWords = extracted.wordCount || countWords(extracted.text);
 
-    // Step 2.5 — Automatically recognize topic category if set to 'auto'
-    const effectiveMode = selectedMode === 'auto'
-      ? autoDetectTopicCategory(extracted.text, extracted.meta?.title || currentTab.title, extracted.meta?.url || currentTab.url)
-      : selectedMode;
-    updateDetectedCategoryUI(effectiveMode, selectedMode !== 'auto');
-
-    // Step 3 — Call backend
-    setProgress(60, `Summarizing as ${formatMode(effectiveMode)}…`);
+    // Step 3 — Call backend with 'auto' so AI summarizes and determines category SIMULTANEOUSLY
+    const requestMode = selectedMode === 'auto' ? 'auto' : selectedMode;
+    setProgress(60, selectedMode === 'auto' ? 'Simultaneously summarizing & categorizing…' : `Summarizing as ${formatMode(selectedMode)}…`);
     const t0 = Date.now();
-    const result = await callSummarizer(extracted.text, effectiveMode, extracted.meta || {});
+    const result = await callSummarizer(extracted.text, requestMode, extracted.meta || {});
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
-    // Step 4 — Render result
+    // Step 4 — Extract simultaneously determined category (from AI response or summary content)
     setProgress(100, 'Done!');
-    const finalMode = result.mode || effectiveMode;
-    updateDetectedCategoryUI(finalMode, selectedMode !== 'auto');
-    lastSummary = enforceStrictCategoryHeadings(
-      result.summary || result.text || result.result || JSON.stringify(result),
-      finalMode
-    );
+    let rawOutput = result.summary || result.text || result.result || JSON.stringify(result);
+    let determinedCat = (result.mode && result.mode !== 'auto') ? result.mode : '';
+
+    // Check if the AI included a "CATEGORY: <id>" line in the summary text
+    const firstLineMatch = rawOutput.match(/^\s*(?:\*\*)?CATEGORY(?:\*\*)?:\s*([a-z_]+)\s*\n/i);
+    if (firstLineMatch) {
+      determinedCat = firstLineMatch[1].toLowerCase().trim();
+      rawOutput = rawOutput.replace(/^\s*(?:\*\*)?CATEGORY(?:\*\*)?:\s*[a-z_]+\s*\n/i, '').trim();
+    }
+
+    // If backend didn't return an explicit category or was an older server, determine simultaneously from summary + content
+    const finalMode = selectedMode !== 'auto'
+      ? selectedMode
+      : (determinedCat && STRICT_CATEGORY_HEADERS[determinedCat]
+          ? determinedCat
+          : autoDetectTopicCategory(`${rawOutput} ${extracted.text}`, extracted.meta?.title || currentTab.title, extracted.meta?.url || currentTab.url));
+
+    updateDetectedCategoryUI(finalMode, selectedMode !== 'auto', false);
+    lastSummary = enforceStrictCategoryHeadings(rawOutput, finalMode);
 
     const summWords = countWords(lastSummary);
     const ratio = extractedWords > 0
@@ -670,10 +680,9 @@ if (modeOverrideSelect) {
   modeOverrideSelect.addEventListener('change', (e) => {
     selectedMode = e.target.value;
     if (selectedMode === 'auto') {
-      const cat = autoDetectTopicCategory('', currentTab?.title || '', currentTab?.url || '');
-      updateDetectedCategoryUI(cat, false);
+      updateDetectedCategoryUI('auto', false, true);
     } else {
-      updateDetectedCategoryUI(selectedMode, true);
+      updateDetectedCategoryUI(selectedMode, true, false);
     }
   });
 }
@@ -732,23 +741,12 @@ async function restoreLastSession(tab) {
 
 // ── Init ───────────────────────────────────────────────────
 (async function init() {
-  // Load tab info & immediately auto-detect topic category
+  // Load tab info — do NOT pre-guess category before summarizing; wait for simultaneous AI pass
   currentTab = await getActiveTab();
   if (currentTab) {
     pageTitle.textContent = currentTab.title || currentTab.url || 'Unknown page';
-    const initialCat = autoDetectTopicCategory('', currentTab.title || '', currentTab.url || '');
-    updateDetectedCategoryUI(initialCat, false);
-
-    // Refine category from live page text in background
-    if (currentTab.url && !currentTab.url.startsWith('chrome://') && !isPdfUrl(currentTab.url)) {
-      extractPageContent(currentTab).then((res) => {
-        if (res && res.text && selectedMode === 'auto') {
-          const refinedCat = autoDetectTopicCategory(res.text, currentTab.title || '', currentTab.url || '');
-          updateDetectedCategoryUI(refinedCat, false);
-        }
-      }).catch(() => {});
-    }
   }
+  updateDetectedCategoryUI('auto', false, true);
 
   // Check backend
   await checkBackend();

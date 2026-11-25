@@ -8,8 +8,8 @@
   window.__omnilogic_content_injected = true;
 
   const API_ENDPOINTS = [
-    "https://omnilogic-backend.onrender.com/api/v1/summarize",
     "http://127.0.0.1:8000/api/v1/summarize",
+    "https://omnilogic-backend.onrender.com/api/v1/summarize",
   ];
 
   function extractCleanText() {
@@ -349,22 +349,30 @@
         return;
       }
 
-      const effectiveMode = currentMode === "auto" ? autoDetectCategory(pageText) : currentMode;
-      const catLabel = CATEGORY_LABELS[effectiveMode] || effectiveMode;
-
-      bodyEl.textContent = `⏳ Auto-recognized topic as [${catLabel}]. Extracting & summarizing with OmniLogic AI...`;
-      statsEl.textContent = `🎯 ${catLabel}`;
+      const reqMode = currentMode === "auto" ? "auto" : currentMode;
+      bodyEl.textContent = "⏳ Simultaneously summarizing & determining topic category with OmniLogic AI...";
+      statsEl.textContent = "✨ Simultaneous AI...";
 
       for (const endpoint of API_ENDPOINTS) {
         try {
           const res = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: pageText, mode: effectiveMode }),
+            body: JSON.stringify({ text: pageText, mode: reqMode }),
           });
           if (res.ok) {
             const data = await res.json();
-            const rawSum = data.summary || data.result || "Summary generated.";
+            let rawSum = data.summary || data.result || "Summary generated.";
+            let determinedCat = (data.mode && data.mode !== "auto") ? data.mode : "";
+            const mCat = rawSum.match(/^\s*(?:\*\*)?CATEGORY(?:\*\*)?:\s*([a-z_]+)\s*\n/i);
+            if (mCat) {
+              determinedCat = mCat[1].toLowerCase().trim();
+              rawSum = rawSum.replace(/^\s*(?:\*\*)?CATEGORY(?:\*\*)?:\s*[a-z_]+\s*\n/i, "").trim();
+            }
+            const effectiveMode = currentMode !== "auto"
+              ? currentMode
+              : (determinedCat && CATEGORY_LABELS[determinedCat] ? determinedCat : autoDetectCategory(rawSum + " " + pageText));
+            const catLabel = CATEGORY_LABELS[effectiveMode] || effectiveMode;
             const strictHeaders = {
               scientific_academic: ["Research Objective & Academic Scope", "Methodology & Structural Framework", "Empirical Findings & Quantitative Specs", "Scholarly Conclusions & Guidelines"],
               technical: ["Technical Overview & System Scope", "Core Mechanisms & Implementation", "Configuration & Operational Pipeline", "Performance Metrics & Verification"],

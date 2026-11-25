@@ -282,29 +282,43 @@ class EfficientSummarizer:
         mode: str = "auto",
         max_words: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Performs high-density summarization using trained exemplars and live Gemini REST models."""
+        """
+        Performs high-density summarization with SIMULTANEOUS single-pass AI category determination
+        when mode='auto', ensuring every bullet heading strictly belongs to the determined category.
+        """
         text = sanitize_text(text)
         requested_mode = (mode or "auto").lower().strip()
-        if requested_mode == "auto" or requested_mode not in SUMMARIZATION_PROMPTS:
-            mode = self.auto_detect_category(text)
-        else:
-            mode = requested_mode
-        system_instruction = SUMMARIZATION_PROMPTS[mode]
+        is_auto_mode = requested_mode == "auto" or requested_mode not in SUMMARIZATION_PROMPTS
+        initial_mode = self.auto_detect_category(text) if is_auto_mode else requested_mode
 
-        # 1. Retrieve top matching trained exemplars directly from dataset_manager.examples
-        trained_matches = self._retrieve_trained_exemplars(text, mode, top_k=2)
+        MANDATORY_CATEGORY_HEADINGS = {
+            "scientific_academic": "1. Research Objective & Academic Scope | 2. Methodology & Structural Framework | 3. Empirical Findings & Quantitative Specifications | 4. Scholarly Conclusions & Guidelines",
+            "technical": "1. Technical Overview & System Scope | 2. Core Mechanisms & Implementation Specs | 3. Operational Pipeline & Configuration | 4. Performance Metrics & Verification",
+            "architecture": "1. System Topology & Architectural Pattern | 2. Component Boundaries & Data Flow | 3. Scalability & Trade-off Analysis | 4. Operational Resilience & Deployment",
+            "legal_governance": "1. Statutory & Constitutional Scope | 2. Structural Provisions & Mandates | 3. Foundational Rights, Articles & Rules | 4. Governance, Compliance & Enforcement",
+            "finance_product": "1. Financial & Market Overview | 2. Core Performance & Valuation Metrics | 3. Portfolio Strengths & Adoption Drivers | 4. Strategic Verdict & Fiscal Outlook",
+            "narrative_history": "1. Historical Context & Origins | 2. Chronological Milestones & Key Events | 3. Governance, Reforms & Cultural Shifts | 4. Historical Impact & Enduring Legacy",
+            "meetings_dialogue": "1. Meeting Context & Core Agenda | 2. Key Decisions & Consensus Reached | 3. Open Questions, Risks & Blockers | 4. Assigned Action Items & Deadlines",
+            "actionable": "1. Primary Objective & Action Scope | 2. Step-by-Step Execution Directives | 3. Key Rules & Formatting Standards | 4. Immediate Deliverables & Checklist",
+            "chain_of_density": "1. Core Entity & Foundational Definition | 2. High-Density Quantitative & Causal Facts | 3. Structural Taxonomy & Classifications | 4. Empirical Synthesis & Systemic Impact",
+            "executive": "1. Executive Summary & Core Thesis | 2. Key Quantitative Highlights & Facts | 3. Foundational Pillars & Structure | 4. Strategic Takeaways & Recommendations",
+        }
+
+        # 1. Retrieve top matching trained exemplars
+        trained_matches = self._retrieve_trained_exemplars(text, initial_mode, top_k=2)
         matched_sources = [m["id"] for m in trained_matches] or ["arch_seed_01"]
 
         # 2. If the user already trained the model on this exact/near-identical document (score >= 0.65),
         #    return the trained target_summary directly in < 5ms!
-        if trained_matches and trained_matches[0]["score"] >= 0.65 and trained_matches[0]["category"].lower() == mode.lower():
+        if trained_matches and trained_matches[0]["score"] >= 0.65:
+            matched_cat = trained_matches[0]["category"].lower()
             direct_summary = sanitize_text(trained_matches[0]["target_summary"])
             metrics = evaluate_summary(direct_summary, text)
             words_original = metrics["original_words"]
             words_summary = metrics["summary_words"]
             reading_time_saved = round(max((words_original - words_summary) / 200 * 60, 0))
             return {
-                "mode": mode,
+                "mode": matched_cat,
                 "summary": direct_summary,
                 "metrics": {
                     "original_words": words_original,
@@ -318,46 +332,59 @@ class EfficientSummarizer:
                 "grounding_exemplars": matched_sources,
             }
 
-        # 3. Build Strictly Category-Isolated In-Context Few-Shot Prompt
-        MANDATORY_CATEGORY_HEADINGS = {
-            "scientific_academic": "1. Research Objective & Academic Scope | 2. Methodology & Structural Framework | 3. Empirical Findings & Quantitative Specifications | 4. Scholarly Conclusions & Guidelines",
-            "technical": "1. Technical Overview & System Scope | 2. Core Mechanisms & Implementation Specs | 3. Operational Pipeline & Configuration | 4. Performance Metrics & Verification",
-            "architecture": "1. System Topology & Architectural Pattern | 2. Component Boundaries & Data Flow | 3. Scalability & Trade-off Analysis | 4. Operational Resilience & Deployment",
-            "legal_governance": "1. Statutory & Constitutional Scope | 2. Structural Provisions & Mandates | 3. Foundational Rights, Articles & Rules | 4. Governance, Compliance & Enforcement",
-            "finance_product": "1. Financial & Market Overview | 2. Core Performance & Valuation Metrics | 3. Portfolio Strengths & Adoption Drivers | 4. Strategic Verdict & Fiscal Outlook",
-            "narrative_history": "1. Historical Context & Origins | 2. Chronological Milestones & Key Events | 3. Governance, Reforms & Cultural Shifts | 4. Historical Impact & Enduring Legacy",
-            "meetings_dialogue": "1. Meeting Context & Core Agenda | 2. Key Decisions & Consensus Reached | 3. Open Questions, Risks & Blockers | 4. Assigned Action Items & Deadlines",
-            "actionable": "1. Primary Objective & Action Scope | 2. Step-by-Step Execution Directives | 3. Key Rules & Formatting Standards | 4. Immediate Deliverables & Checklist",
-            "chain_of_density": "1. Core Entity & Foundational Definition | 2. High-Density Quantitative & Causal Facts | 3. Structural Taxonomy & Classifications | 4. Empirical Synthesis & Systemic Impact",
-            "executive": "1. Executive Summary & Core Thesis | 2. Key Quantitative Highlights & Facts | 3. Foundational Pillars & Structure | 4. Strategic Takeaways & Recommendations",
-        }
-        allowed_headings = MANDATORY_CATEGORY_HEADINGS.get(mode, MANDATORY_CATEGORY_HEADINGS["executive"])
-
-        few_shot_block = ""
-        for m in trained_matches:
-            if m["category"].lower() != mode.lower():
-                continue
-            snippet_in = m["input_text"][:500].strip()
-            snippet_out = m["target_summary"][:700].strip()
-            few_shot_block += (
-                f"\n--- TRAINED EXEMPLAR ({m['id']} | Category: {m['category']}) ---\n"
-                f"SOURCE EXCERPT:\n{snippet_in}\n"
-                f"TARGET SUMMARY FORMAT:\n{snippet_out}\n"
-            )
-
         if len(text) > 60000:
-            prompt_context = await self._condense_large_text(text, mode)
+            prompt_context = await self._condense_large_text(text, initial_mode)
             if len(prompt_context) > 90000:
                 prompt_context = self._prepare_hierarchical_context(prompt_context, max_chars=90000)
         else:
             prompt_context = text
 
-        prompt = f"""{system_instruction}
+        if is_auto_mode:
+            all_schemas = "\n".join(
+                f"- {cat_id}: {headings}" for cat_id, headings in MANDATORY_CATEGORY_HEADINGS.items()
+            )
+            prompt = f"""You are the OmniLogic Simultaneous Classifier & High-Density Summarizer.
+
+TASK:
+Read the document below and SIMULTANEOUSLY:
+1. Determine which ONE of the 10 domain categories below best represents the document's core content.
+2. Summarize the document using ONLY the 4 mandatory section headings belonging to that determined category.
+
+AVAILABLE CATEGORIES AND THEIR MANDATORY SECTION HEADINGS:
+{all_schemas}
+
+STRICT OUTPUT FORMAT:
+- Line 1 MUST be exactly: CATEGORY: <chosen_category_id>
+- Lines 2+ MUST be your 4 bullet points formatted as: • **<Mandatory Heading>**: <Detailed synthesis>
+- NEVER mix headings across categories (e.g., if the document is scientific_academic, NEVER use financial or legal headings).
+- Ignore webpage navigation noise, search result breadcrumb prefixes, or cookie banners.
+
+DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
+{prompt_context}
+
+{f"Target length: approximately {max_words} words." if max_words else "Provide a thorough, structured, publication-grade summary strictly tailored to the determined category."}
+"""
+        else:
+            mode = requested_mode
+            system_instruction = SUMMARIZATION_PROMPTS[mode]
+            allowed_headings = MANDATORY_CATEGORY_HEADINGS.get(mode, MANDATORY_CATEGORY_HEADINGS["executive"])
+            few_shot_block = ""
+            for m in trained_matches:
+                if m["category"].lower() != mode.lower():
+                    continue
+                snippet_in = m["input_text"][:500].strip()
+                snippet_out = m["target_summary"][:700].strip()
+                few_shot_block += (
+                    f"\n--- TRAINED EXEMPLAR ({m['id']} | Category: {m['category']}) ---\n"
+                    f"SOURCE EXCERPT:\n{snippet_in}\n"
+                    f"TARGET SUMMARY FORMAT:\n{snippet_out}\n"
+                )
+            prompt = f"""{system_instruction}
 
 MANDATORY CATEGORY ISOLATION RULE (ACTIVE CATEGORY: {mode.upper()}):
 You MUST structure every bullet point in your summary strictly around the [{mode.upper()}] category using ONLY these exact section headings:
 {allowed_headings}
-NEVER use headings or terminology from other categories (for example, if the category is NOT finance_product, NEVER use "Financial & Market Overview" or "Core Performance & Value Metrics"). Every single bullet point must directly match the [{mode.upper()}] domain.
+NEVER use headings or terminology from other categories.
 
 {f"REFERENCE STYLE FROM SAME-CATEGORY EXEMPLARS:{few_shot_block}" if few_shot_block else ""}
 
@@ -371,13 +398,32 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
 {f"Target length: approximately {max_words} words." if max_words else "Provide a thorough, structured, publication-grade summary strictly tailored to this category."}
 """
 
-        # 4. Call Live Gemini REST API (bypasses gRPC SSL issues and uses active quota models)
+        # 4. Call Live Gemini REST API
         summary_text = await self._generate(prompt)
+        final_mode = initial_mode
 
-        if not summary_text:
+        if summary_text:
+            # Extract simultaneous CATEGORY: <id> header if returned by the AI
+            lines = summary_text.strip().splitlines()
+            cleaned_lines = []
+            for idx, l in enumerate(lines):
+                cat_match = re.match(r"^\s*(?:\*\*)?CATEGORY(?:\*\*)?:\s*([a-z_]+)\s*$", l.strip(), flags=re.I)
+                if idx == 0 and cat_match:
+                    candidate_cat = cat_match.group(1).lower().strip()
+                    if candidate_cat in SUMMARIZATION_PROMPTS:
+                        final_mode = candidate_cat
+                    continue
+                cleaned_lines.append(l)
+            summary_text = "\n".join(cleaned_lines).strip()
+            if is_auto_mode and final_mode == initial_mode:
+                # Also verify against the generated summary text
+                final_mode = self.auto_detect_category(summary_text + "\n" + text[:4000])
+        else:
             # Deterministic Local High-Efficiency Summary Fallback
-            summary_text = self._fallback_summary(text, mode)
+            final_mode = initial_mode
+            summary_text = self._fallback_summary(text, final_mode)
 
+        mode = final_mode
         summary_text = sanitize_text(summary_text)
 
         # 5. Compute Compression & Efficiency Metrics
