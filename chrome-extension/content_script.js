@@ -8,8 +8,8 @@
   window.__omnilogic_content_injected = true;
 
   const API_ENDPOINTS = [
-    "https://omnilogic-backend.onrender.com/api/v1/summarize",
     "http://127.0.0.1:8000/api/v1/summarize",
+    "https://omnilogic-backend.onrender.com/api/v1/summarize",
   ];
 
   function extractCleanText() {

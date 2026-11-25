@@ -2,7 +2,7 @@
    OmniLogic Chrome Extension — Popup Logic
    ═══════════════════════════════════════════════════════════ */
 
-const BACKEND = 'https://omnilogic-backend.onrender.com';
+const BACKEND = 'http://127.0.0.1:8000';
 
 // ── State ──────────────────────────────────────────────────
 let selectedMode   = 'auto';
@@ -315,11 +315,12 @@ function renderSummary(text, mode = detectedMode) {
 let activeBackend = BACKEND;
 
 async function checkBackend() {
-  for (const host of ['https://omnilogic-backend.onrender.com', 'http://127.0.0.1:8000', 'http://localhost:8000']) {
+  for (const host of ['http://127.0.0.1:8000', 'http://localhost:8000', 'https://omnilogic-backend.onrender.com']) {
     try {
+      const timeoutMs = host.includes('127.0.0.1') || host.includes('localhost') ? 2500 : 15000;
       const r = await fetch(`${host}/api/v1/health`, {
         method: 'GET',
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(timeoutMs)
       });
       if (r.ok) {
         activeBackend = host;
