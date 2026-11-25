@@ -46,8 +46,13 @@
     }
 
     const sourceEl = primaryContent || clone;
+    // Ensure block & heading tags have trailing spaces/newlines so breadcrumb titles never glue onto sentences
+    sourceEl.querySelectorAll("h1, h2, h3, h4, h5, h6, p, div, li, cite, tr, br").forEach((el) => {
+      el.appendChild(document.createTextNode("\n"));
+    });
     let text = sourceEl.innerText || sourceEl.textContent || "";
     text = text
+      .replace(/([a-z]{3,})([A-Z][a-z]{3,})/g, "$1. $2")
       .replace(/\[\s*(?:\d+|[a-zA-Z]{1,3}|citation needed|edit)\s*\]/gi, "")
       .replace(/\t/g, " ")
       .replace(/[ ]{2,}/g, " ")
@@ -66,6 +71,52 @@
       url: window.location.href,
       description: document.querySelector('meta[name="description"]')?.content || "",
     };
+  }
+
+  const CATEGORY_LABELS = {
+    executive: "Executive Overview",
+    technical: "Technical & Engineering",
+    architecture: "Systems Architecture",
+    chain_of_density: "Dense (Chain-of-Density)",
+    actionable: "Action Items & Directives",
+    finance_product: "Finance & Product",
+    narrative_history: "Narrative & History",
+    meetings_dialogue: "Meetings & Dialogue",
+    scientific_academic: "Scientific & Academic",
+    legal_governance: "Legal & Governance",
+  };
+
+  function autoDetectCategory(text) {
+    const u = location.href.toLowerCase();
+    const combined = `${document.title} ${u} ${(text || "").substring(0, 12000)}`.toLowerCase();
+    if (u.includes("arxiv.org") || u.includes("ncbi.nlm") || u.includes("ieee.org")) return "scientific_academic";
+    if (u.includes("readthedocs.io") || u.includes("github.com") || u.includes("stackoverflow.com")) return "technical";
+
+    const lexicons = {
+      legal_governance: ["constitution", "article ", "amendment", "statute", "supreme court", "parliament", "jurisdiction", "fundamental rights", "clause", "legislation", "governance"],
+      scientific_academic: ["abstract", "methodology", "hypothesis", "et al", "arxiv", "empirical", "theorem", "experiment", "neural network", "citation", "journal", "preprint"],
+      finance_product: ["factsheet", "etf", "mutual fund", "index fund", "aum", "nav", "expense ratio", "revenue", "earnings", "fiscal", "gross margin", "portfolio", "dividend", "arr", "roi"],
+      architecture: ["monolithic", "microservices", "distributed system", "system topology", "sharding", "vector index", "hnsw", "load balancer", "high availability", "scalability"],
+      technical: ["fastapi", "uvicorn", "python", "javascript", "typescript", "docker", "kubernetes", "api", "endpoint", "memory leak", "compiler", "oauth", "tutorial", "documentation"],
+      narrative_history: ["emperor", "empire", "dynasty", "reign", "century", "kingdom", "war", "ancient", "republic", "senate", "historical", "biography", "chronicle", "civilization"],
+      meetings_dialogue: ["standup", "transcript", "attendees", "moderator", "speaker", "agenda", "minutes of meeting", "sprint", "interview"],
+      actionable: ["action items", "checklist", "step 1", "step 2", "next steps", "how to", "playbook", "todo", "guidelines"],
+      chain_of_density: ["wikipedia", "encyclopedia", "metabolism", "digestion", "physiology"],
+    };
+
+    let bestCat = u.includes("wikipedia.org") ? "chain_of_density" : "executive";
+    let bestScore = 0;
+    for (const [cat, words] of Object.entries(lexicons)) {
+      let score = 0;
+      for (const w of words) {
+        if (combined.includes(w)) score++;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestCat = cat;
+      }
+    }
+    return bestCat;
   }
 
   // Listen for messages from extension toolbar popup.js
@@ -252,14 +303,15 @@
           <button class="omnilogic-close" id="ol-close">✕</button>
         </div>
         <div class="omnilogic-modes" id="ol-modes">
-          <button class="omnilogic-mode-btn active" data-mode="executive">Executive</button>
+          <button class="omnilogic-mode-btn active" data-mode="auto">✨ Auto-Detect</button>
+          <button class="omnilogic-mode-btn" data-mode="executive">Executive</button>
           <button class="omnilogic-mode-btn" data-mode="technical">Technical</button>
           <button class="omnilogic-mode-btn" data-mode="chain_of_density">Dense (CoD)</button>
           <button class="omnilogic-mode-btn" data-mode="actionable">Action Items</button>
         </div>
         <div class="omnilogic-body" id="ol-body">Click "Summarize This Page" below to distill this webpage right here.</div>
         <div class="omnilogic-footer">
-          <span id="ol-stats">Ready on this tab</span>
+          <span id="ol-stats">✨ Auto-Detect Topic Ready</span>
           <button class="omnilogic-run-btn" id="ol-run">⚡ Summarize Page</button>
         </div>
       </div>
@@ -272,7 +324,7 @@
     shadow.appendChild(style);
     shadow.appendChild(container);
 
-    let currentMode = "executive";
+    let currentMode = "auto";
     const panel = shadow.getElementById("ol-panel");
     const fab = shadow.getElementById("ol-fab");
     const closeBtn = shadow.getElementById("ol-close");
@@ -285,7 +337,7 @@
       btn.addEventListener("click", () => {
         modeBtns.forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
-        currentMode = btn.getAttribute("data-mode") || "executive";
+        currentMode = btn.getAttribute("data-mode") || "auto";
       });
     });
 
@@ -297,23 +349,48 @@
         return;
       }
 
-      bodyEl.textContent = "⏳ Extracting & compressing page content with OmniLogic AI...";
-      statsEl.textContent = selectedText.length > 60 ? "Summarizing selection..." : "Analyzing full page...";
+      const effectiveMode = currentMode === "auto" ? autoDetectCategory(pageText) : currentMode;
+      const catLabel = CATEGORY_LABELS[effectiveMode] || effectiveMode;
+
+      bodyEl.textContent = `⏳ Auto-recognized topic as [${catLabel}]. Extracting & summarizing with OmniLogic AI...`;
+      statsEl.textContent = `🎯 ${catLabel}`;
 
       for (const endpoint of API_ENDPOINTS) {
         try {
           const res = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: pageText, mode: currentMode }),
+            body: JSON.stringify({ text: pageText, mode: effectiveMode }),
           });
           if (res.ok) {
             const data = await res.json();
-            bodyEl.textContent = data.summary || data.result || "Summary generated.";
+            const rawSum = data.summary || data.result || "Summary generated.";
+            const strictHeaders = {
+              scientific_academic: ["Research Objective & Academic Scope", "Methodology & Structural Framework", "Empirical Findings & Quantitative Specs", "Scholarly Conclusions & Guidelines"],
+              technical: ["Technical Overview & System Scope", "Core Mechanisms & Implementation", "Configuration & Operational Pipeline", "Performance Metrics & Verification"],
+              architecture: ["System Topology & Architectural Pattern", "Component Boundaries & Data Flow", "Scalability & Trade-off Analysis", "Operational Resilience & Deployment"],
+              legal_governance: ["Statutory & Constitutional Scope", "Structural Provisions & Mandates", "Foundational Rights & Obligations", "Enforcement & Amendment Mechanisms"],
+              finance_product: ["Financial & Market Overview", "Core Performance & Valuation Metrics", "Portfolio Composition & Strengths", "Strategic Verdict & Fiscal Outlook"],
+              narrative_history: ["Historical Context & Origins", "Chronological Milestones & Events", "Governance, Reforms & Cultural Shifts", "Historical Impact & Enduring Legacy"],
+              meetings_dialogue: ["Meeting Context & Core Agenda", "Key Decisions & Consensus Reached", "Open Questions, Risks & Blockers", "Assigned Action Items & Next Steps"],
+              actionable: ["Primary Objective & Action Scope", "Step-by-Step Execution Directives", "Key Rules & Operational Standards", "Immediate Deliverables & Checklist"],
+              chain_of_density: ["Core Subject & Foundational Definition", "High-Density Quantitative & Causal Facts", "Structural Taxonomy & Classifications", "Empirical Synthesis & Systemic Impact"],
+              executive: ["Executive Summary & Core Thesis", "Key Quantitative Highlights & Facts", "Foundational Pillars & Structure", "Strategic Takeaways & Recommendations"],
+            };
+            const targetH = strictHeaders[effectiveMode] || strictHeaders.executive;
+            let bIdx = 0;
+            const cleanedSum = rawSum.split("\n").map((l) =>
+              l.replace(/^[•\-*]\s*\*\*([^*]+)\*\*:\s*(?:[A-Z][A-Za-z0-9 &.,'-]{3,35}?\s*—\s*)?/, () => {
+                const h = targetH[Math.min(bIdx, targetH.length - 1)];
+                bIdx++;
+                return `• **${h}**: `;
+              })
+            ).join("\n");
+            bodyEl.textContent = cleanedSum;
             if (data.metrics) {
-              statsEl.textContent = `✓ ${data.metrics.summary_words} words (Saved ${data.metrics.reading_time_saved_seconds || 30}s)`;
+              statsEl.textContent = `🎯 ${catLabel} • ${data.metrics.summary_words}w`;
             } else {
-              statsEl.textContent = "✓ Complete";
+              statsEl.textContent = `🎯 ${catLabel} • Complete`;
             }
             return;
           }

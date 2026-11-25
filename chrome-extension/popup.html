@@ -33,29 +33,33 @@
     <span class="page-title" id="pageTitle">Inspecting active tab…</span>
   </div>
 
-  <!-- Segmented Synthesis Mode -->
+  <!-- Automatic AI Topic Category Recognition -->
   <div class="mode-section">
-    <div class="section-header">
-      <label class="section-label">Synthesis Profile</label>
-      <span class="section-hint">RAFT Grounded</span>
+    <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <label class="section-label">Topic Category</label>
+      <span class="section-hint" id="autoDetectBadge" style="color:#7bd0ff;font-weight:700;">✨ Auto-Recognized</span>
     </div>
-    <div class="mode-grid">
-      <button class="mode-btn active" data-mode="executive">
-        <span class="mode-name">Executive</span>
-        <span class="mode-desc">Core takeaways</span>
-      </button>
-      <button class="mode-btn" data-mode="technical">
-        <span class="mode-name">Technical</span>
-        <span class="mode-desc">Specs &amp; metrics</span>
-      </button>
-      <button class="mode-btn" data-mode="chain_of_density">
-        <span class="mode-name">Dense</span>
-        <span class="mode-desc">High entropy</span>
-      </button>
-      <button class="mode-btn" data-mode="actionable">
-        <span class="mode-name">Directives</span>
-        <span class="mode-desc">Next steps</span>
-      </button>
+    <div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(123,208,255,0.3);border-radius:10px;padding:7px 10px;">
+      <span style="font-size:14px;">🎯</span>
+      <div style="flex:1;min-width:0;">
+        <div id="detectedCategoryLabel" style="font-size:12px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+          Analyzing page topic…
+        </div>
+        <div style="font-size:10px;color:#988d9f;">Automatically matched across 10 AI streams</div>
+      </div>
+      <select id="modeOverrideSelect" title="Optional: override auto-detected category" style="background:#12121a;color:#cfc2d6;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:3px 6px;font-size:10.5px;outline:none;cursor:pointer;">
+        <option value="auto" selected>✨ Auto</option>
+        <option value="executive">Executive</option>
+        <option value="technical">Technical</option>
+        <option value="architecture">Architecture</option>
+        <option value="chain_of_density">Dense (CoD)</option>
+        <option value="actionable">Action Items</option>
+        <option value="finance_product">Finance &amp; ETF</option>
+        <option value="narrative_history">History</option>
+        <option value="meetings_dialogue">Meetings</option>
+        <option value="scientific_academic">Scientific</option>
+        <option value="legal_governance">Legal &amp; Policy</option>
+      </select>
     </div>
   </div>
 

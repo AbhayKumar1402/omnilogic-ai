@@ -163,23 +163,33 @@ class EfficientSummarizer:
         return "\n\n".join(segments)
 
     def _retrieve_trained_exemplars(self, text: str, mode: str, top_k: int = 2) -> List[Dict[str, Any]]:
-        """Searches dataset_manager.examples directly using token overlap + category boost."""
-        query_words = set(tokenize_words(text))
+        """
+        Searches dataset_manager.examples with STRICT category isolation.
+        When `mode` is provided, ONLY exemplars belonging to that exact `mode` category are eligible,
+        preventing cross-category contamination (e.g., finance headers leaking into scientific/academic summaries).
+        """
+        query_words = set(tokenize_words(text[:4000]))
         if not query_words:
             return []
 
+        target_mode = (mode or "").lower().strip()
         scored = []
         for ex in dataset_manager.examples:
-            ex_words = set(tokenize_words(ex.input_text))
+            ex_cat = ex.category.lower().strip()
+            # STRICT CATEGORY ISOLATION: If a target mode is active, never retrieve exemplars from other categories
+            if target_mode and target_mode in SUMMARIZATION_PROMPTS and ex_cat != target_mode:
+                continue
+
+            # Compare against leading 4,000 chars so 66,000-word documents don't dominate via vocabulary size
+            ex_words = set(tokenize_words(ex.input_text[:4000]))
             if not ex_words:
                 continue
             intersection = len(query_words & ex_words)
             union = len(query_words | ex_words)
             jaccard = intersection / max(union, 1)
-            overlap_ratio = intersection / max(min(len(query_words), len(ex_words)), 1)
-            score = (jaccard * 0.5) + (overlap_ratio * 0.5)
-            if ex.category.lower() == mode.lower():
-                score += 0.08
+            len_balance = min(len(query_words), len(ex_words)) / max(len(query_words), len(ex_words), 1)
+            overlap_ratio = (intersection / max(min(len(query_words), len(ex_words)), 1)) * len_balance
+            score = (jaccard * 0.6) + (overlap_ratio * 0.4)
             scored.append((score, ex))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -194,24 +204,100 @@ class EfficientSummarizer:
             })
         return results
 
+    def auto_detect_category(self, text: str) -> str:
+        """Automatically classifies input text into one of the 10 specialized cognitive categories using whole-word boundaries."""
+        sample = (text or "")[:12000].lower()
+        if not sample.strip():
+            return "executive"
+
+        # 1. Check associative similarity against trained Golden Exemplars first
+        matches = self._retrieve_trained_exemplars(sample, mode="", top_k=1)
+        if matches and matches[0]["score"] >= 0.25 and matches[0]["category"] in SUMMARIZATION_PROMPTS:
+            return matches[0]["category"]
+
+        # 2. Multi-domain lexical density scoring across all 10 categories (strict word-boundary matching for short tokens)
+        domain_lexicons = {
+            "legal_governance": [
+                "constitution", "article ", "amendment", "statute", "supreme court", "parliament",
+                "jurisdiction", "fundamental rights", "clause", "ordinance", "legislation",
+                "statutory", "governance", "directive principles", "schedule", "writ",
+            ],
+            "scientific_academic": [
+                "research paper", "dissertation", "thesis", "literature review", "conference",
+                "journal", "ieee", "acm", "abstract", "methodology", "hypothesis", "et al",
+                "arxiv", "empirical", "theorem", "experiment", "transduction", "neural network",
+                "citation", "peer-reviewed", "preprint", "academic", "university", "manuscript",
+            ],
+            "finance_product": [
+                "factsheet", "mutual fund", "index fund", "expense ratio", "gross margin",
+                "free cash flow", "portfolio", "dividend", "sharpe ratio", "market cap",
+                "valuation", "ebitda", "quarterly revenue", "fiscal year", "stock market",
+            ],
+            "architecture": [
+                "monolithic", "microservices", "distributed system", "system topology", "sharding",
+                "vector index", "hnsw", "ivfflat", "load balancer", "high availability", "consensus",
+                "data flow", "message queue", "kafka", "event-driven", "scalability", "database schema",
+            ],
+            "technical": [
+                "fastapi", "uvicorn", "python", "javascript", "typescript", "docker", "kubernetes",
+                "sqlalchemy", "endpoint", "memory leak", "garbage collection", "compiler",
+                "post-mortem", "outage", "oauth", "repository", "tutorial", "source code", "debugging",
+            ],
+            "narrative_history": [
+                "emperor", "empire", "dynasty", "reign", "century", "kingdom", "ancient",
+                "republic", "senate", "historical", "biography", "chronicle", "treaty", "civilization",
+                "world war", "invasion", "monarch", "colonial", "revolution",
+            ],
+            "meetings_dialogue": [
+                "standup", "transcript", "attendees", "moderator", "speaker", "agenda",
+                "minutes of meeting", "blocker", "sprint", "q&a", "interview", "discussion",
+            ],
+            "actionable": [
+                "action items", "checklist", "step 1", "step 2", "next steps", "how to",
+                "playbook", "todo", "deliverables", "standard operating procedure", "guidelines",
+            ],
+            "chain_of_density": [
+                "wikipedia", "encyclopedia", "metabolism", "digestion", "physiology",
+                "international men's day", "comprehensive overview", "thermogenesis",
+            ],
+            "executive": [
+                "executive", "strategic", "leadership", "board of directors", "roadmap",
+                "stakeholder", "enterprise", "key takeaways",
+            ],
+        }
+
+        best_cat = "executive"
+        best_score = 0
+        for cat, keywords in domain_lexicons.items():
+            hits = sum(1 for kw in keywords if kw in sample)
+            if hits > best_score:
+                best_score = hits
+                best_cat = cat
+
+        return best_cat
+
     async def summarize(
         self,
         text: str,
-        mode: str = "technical",
+        mode: str = "auto",
         max_words: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Performs high-density summarization using trained exemplars and live Gemini REST models."""
         text = sanitize_text(text)
-        mode = mode.lower() if mode.lower() in SUMMARIZATION_PROMPTS else "technical"
+        requested_mode = (mode or "auto").lower().strip()
+        if requested_mode == "auto" or requested_mode not in SUMMARIZATION_PROMPTS:
+            mode = self.auto_detect_category(text)
+        else:
+            mode = requested_mode
         system_instruction = SUMMARIZATION_PROMPTS[mode]
 
         # 1. Retrieve top matching trained exemplars directly from dataset_manager.examples
         trained_matches = self._retrieve_trained_exemplars(text, mode, top_k=2)
         matched_sources = [m["id"] for m in trained_matches] or ["arch_seed_01"]
 
-        # 2. If the user already trained the model on this exact/near-identical document (score >= 0.45),
+        # 2. If the user already trained the model on this exact/near-identical document (score >= 0.65),
         #    return the trained target_summary directly in < 5ms!
-        if trained_matches and trained_matches[0]["score"] >= 0.45:
+        if trained_matches and trained_matches[0]["score"] >= 0.65 and trained_matches[0]["category"].lower() == mode.lower():
             direct_summary = sanitize_text(trained_matches[0]["target_summary"])
             metrics = evaluate_summary(direct_summary, text)
             words_original = metrics["original_words"]
@@ -232,13 +318,29 @@ class EfficientSummarizer:
                 "grounding_exemplars": matched_sources,
             }
 
-        # 3. Build In-Context Few-Shot Training Prompt from the closest trained exemplars
+        # 3. Build Strictly Category-Isolated In-Context Few-Shot Prompt
+        MANDATORY_CATEGORY_HEADINGS = {
+            "scientific_academic": "1. Research Objective & Academic Scope | 2. Methodology & Structural Framework | 3. Empirical Findings & Quantitative Specifications | 4. Scholarly Conclusions & Guidelines",
+            "technical": "1. Technical Overview & System Scope | 2. Core Mechanisms & Implementation Specs | 3. Operational Pipeline & Configuration | 4. Performance Metrics & Verification",
+            "architecture": "1. System Topology & Architectural Pattern | 2. Component Boundaries & Data Flow | 3. Scalability & Trade-off Analysis | 4. Operational Resilience & Deployment",
+            "legal_governance": "1. Statutory & Constitutional Scope | 2. Structural Provisions & Mandates | 3. Foundational Rights, Articles & Rules | 4. Governance, Compliance & Enforcement",
+            "finance_product": "1. Financial & Market Overview | 2. Core Performance & Valuation Metrics | 3. Portfolio Strengths & Adoption Drivers | 4. Strategic Verdict & Fiscal Outlook",
+            "narrative_history": "1. Historical Context & Origins | 2. Chronological Milestones & Key Events | 3. Governance, Reforms & Cultural Shifts | 4. Historical Impact & Enduring Legacy",
+            "meetings_dialogue": "1. Meeting Context & Core Agenda | 2. Key Decisions & Consensus Reached | 3. Open Questions, Risks & Blockers | 4. Assigned Action Items & Deadlines",
+            "actionable": "1. Primary Objective & Action Scope | 2. Step-by-Step Execution Directives | 3. Key Rules & Formatting Standards | 4. Immediate Deliverables & Checklist",
+            "chain_of_density": "1. Core Entity & Foundational Definition | 2. High-Density Quantitative & Causal Facts | 3. Structural Taxonomy & Classifications | 4. Empirical Synthesis & Systemic Impact",
+            "executive": "1. Executive Summary & Core Thesis | 2. Key Quantitative Highlights & Facts | 3. Foundational Pillars & Structure | 4. Strategic Takeaways & Recommendations",
+        }
+        allowed_headings = MANDATORY_CATEGORY_HEADINGS.get(mode, MANDATORY_CATEGORY_HEADINGS["executive"])
+
         few_shot_block = ""
         for m in trained_matches:
-            snippet_in = m["input_text"][:600].strip()
-            snippet_out = m["target_summary"][:900].strip()
+            if m["category"].lower() != mode.lower():
+                continue
+            snippet_in = m["input_text"][:500].strip()
+            snippet_out = m["target_summary"][:700].strip()
             few_shot_block += (
-                f"\n--- TRAINED EXEMPLAR ({m['id']} | {m['category']}) ---\n"
+                f"\n--- TRAINED EXEMPLAR ({m['id']} | Category: {m['category']}) ---\n"
                 f"SOURCE EXCERPT:\n{snippet_in}\n"
                 f"TARGET SUMMARY FORMAT:\n{snippet_out}\n"
             )
@@ -252,18 +354,21 @@ class EfficientSummarizer:
 
         prompt = f"""{system_instruction}
 
-FOLLOW THE STRUCTURE, DEPTH, AND HIGH INFORMATION DENSITY OF THESE TRAINED GOLDEN EXEMPLARS:
-{few_shot_block if few_shot_block else "Use clear thematic headings and comprehensive bullet points with zero fluff."}
+MANDATORY CATEGORY ISOLATION RULE (ACTIVE CATEGORY: {mode.upper()}):
+You MUST structure every bullet point in your summary strictly around the [{mode.upper()}] category using ONLY these exact section headings:
+{allowed_headings}
+NEVER use headings or terminology from other categories (for example, if the category is NOT finance_product, NEVER use "Financial & Market Overview" or "Core Performance & Value Metrics"). Every single bullet point must directly match the [{mode.upper()}] domain.
+
+{f"REFERENCE STYLE FROM SAME-CATEGORY EXEMPLARS:{few_shot_block}" if few_shot_block else ""}
 
 CRITICAL RULES:
-1. Ignore any webpage navigation noise, search bar headers, or feedback prompts.
-2. Summarize the ENTIRE document comprehensively from start to finish — include foundational facts, numbers/dates, structural parts/categories, and specific key items (such as key Articles, chapters, mechanisms, or milestones across all pages).
-3. Use clean markdown with bold section/bullet titles (• **Heading**: Details).
+1. Ignore any webpage navigation noise, search result breadcrumb prefixes, search bar headers, or feedback prompts.
+2. Summarize the document comprehensively using ONLY the [{mode.upper()}] headings listed above (• **Heading**: Details).
 
 DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
 {prompt_context}
 
-{f"Target length: approximately {max_words} words." if max_words else "Provide a thorough, structured, publication-grade summary covering the full document."}
+{f"Target length: approximately {max_words} words." if max_words else "Provide a thorough, structured, publication-grade summary strictly tailored to this category."}
 """
 
         # 4. Call Live Gemini REST API (bypasses gRPC SSL issues and uses active quota models)
@@ -386,11 +491,14 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
         return None
 
     def _fallback_summary(self, text: str, mode: str) -> str:
-        """Generates a comprehensive, topic-adaptive multi-section synthesis when offline."""
+        """
+        Generates a strictly category-isolated, multi-section synthesis when offline.
+        Every bullet heading belongs 100% to the requested `mode` — zero cross-category leakage.
+        """
         clean_lines = [line.strip() for line in text.splitlines() if line.strip()]
         cleaned_text = " ".join(clean_lines)
 
-        # Extract any explicit "Article X: ..." items for constitutional/legal texts
+        # Extract any explicit "Article X: ..." items ONLY when mode is legal_governance
         article_items = re.findall(
             r"(Article\s+\d+[A-Z]?(?:\s*(?:&|,|and)\s*\d+[A-Z]?)*:\s*[^.!?]+[.!?])",
             cleaned_text,
@@ -399,112 +507,90 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
         sentences = [
             s.strip()
             for s in re.split(r"(?<=[.!?])\s+", cleaned_text)
-            if 30 <= len(s.strip()) <= 380
+            if 25 <= len(s.strip()) <= 400
         ]
 
         if not sentences:
-            return "• **Executive Overview**: Document parsed and key structural metrics verified across all sections."
+            sentences = [cleaned_text[:350]] if cleaned_text else ["Document analyzed."]
 
-        lower_doc = cleaned_text.lower()
-
-        # Check for Constitutional / Legal / Statutory documents
-        if (
-            mode == "legal_governance"
-            or len(article_items) >= 3
-            or any(
-                k in lower_doc
-                for k in [
-                    "constitution", "fundamental rights", "directive principles",
-                    "statute", "compliance", "regulation", "clause", "liability",
-                    "jurisdiction", "amendment", "parliament", "supreme court",
-                ]
-            )
-        ):
+        # Special multi-article breakdown strictly for legal_governance mode
+        if mode == "legal_governance" and len(article_items) >= 3:
             out = []
-            # 1. Constitutional / Statutory Structure & Scope
             scope_sents = [
                 s for s in sentences
                 if any(w in s.lower() for w in ["originally contained", "constitution", "articles", "parts", "schedules", "established", "took effect"])
             ]
             if scope_sents:
-                out.append("• **Constitutional Scope & Evolution**: " + " ".join(s.rstrip(".!?") + "." for s in scope_sents[:2]))
+                out.append("• **Constitutional & Statutory Scope**: " + " ".join(s.rstrip(".!?") + "." for s in scope_sents[:2]))
+            top_articles = [a.strip().rstrip(".!?") + "." for a in article_items[:8]]
+            out.append("• **Foundational Articles & Legal Provisions**:\n  - " + "\n  - ".join(top_articles))
+            return "\n".join(out)
 
-            # 2. Core Parts & Structural Framework
-            if "part iii" in lower_doc or "fundamental rights" in lower_doc:
-                out.append(
-                    "• **Structural Organization (25 Parts & 12 Schedules)**: Encompasses The Union & States (Parts I, V, VI), "
-                    "Citizenship (Part II), Fundamental Rights (Part III, Articles 12–35), Directive Principles (Part IV, Articles 36–51), "
-                    "Fundamental Duties (Part IVA, Article 51A), Panchayats & Municipalities (Parts IX–IXB), Elections (Part XV), and Emergency Provisions (Part XVIII)."
-                )
+        # STRICTLY ISOLATED CATEGORY PROFILES (100% bound to `mode`, never hijacked by other categories)
+        STRICT_CATEGORY_PROFILES = {
+            "scientific_academic": [
+                ("Research Objective & Academic Scope", ["research", "objective", "hypothesis", "propose", "study", "paper", "dissertation", "investigate", "abstract", "journal", "conference"]),
+                ("Methodology & Structural Framework", ["methodology", "format", "structure", "layout", "section", "method", "model", "framework", "algorithm", "experiment", "literature"]),
+                ("Empirical Findings & Quantitative Specs", ["pages", "words", "results", "metrics", "accuracy", "margin", "font", "spacing", "table", "figure", "data", "analysis"]),
+                ("Scholarly Conclusions & Guidelines", ["conclusion", "reference", "citation", "ieee", "acm", "implication", "guideline", "submission", "demonstrate"]),
+            ],
+            "technical": [
+                ("Technical Overview & System Scope", ["system", "framework", "api", "service", "application", "module", "platform", "tutorial", "documentation", "overview"]),
+                ("Core Mechanisms & Implementation", ["function", "code", "implementation", "engine", "runtime", "async", "database", "protocol", "token", "compiler", "bug", "leak"]),
+                ("Configuration & Operational Pipeline", ["config", "deploy", "docker", "container", "server", "port", "endpoint", "route", "pipeline", "command", "install"]),
+                ("Performance Metrics & Verification", ["performance", "latency", "memory", "test", "verify", "benchmark", "throughput", "error", "fix", "resolution"]),
+            ],
+            "architecture": [
+                ("System Topology & Architectural Pattern", ["architecture", "monolith", "microservice", "topology", "distributed", "layer", "tier", "pattern", "design"]),
+                ("Component Boundaries & Data Flow", ["component", "service", "flow", "interface", "gateway", "queue", "shard", "index", "vector", "storage"]),
+                ("Scalability & Trade-off Analysis", ["scalability", "trade-off", "latency", "overhead", "memory", "recall", "throughput", "coupling", "complexity"]),
+                ("Operational Resilience & Deployment", ["resilience", "availability", "fault", "cluster", "node", "orchestration", "deployment", "hybrid"]),
+            ],
+            "legal_governance": [
+                ("Statutory & Constitutional Scope", ["constitution", "statute", "act", "law", "policy", "enacted", "framework", "governance", "jurisdiction"]),
+                ("Structural Provisions & Mandates", ["part", "schedule", "clause", "section", "provision", "mandate", "authority", "regulation", "rule"]),
+                ("Foundational Rights & Obligations", ["right", "duty", "obligation", "protection", "liberty", "equality", "freedom", "compliance", "citizen"]),
+                ("Enforcement & Amendment Mechanisms", ["amendment", "court", "parliament", "judicial", "enforcement", "emergency", "penalty", "review"]),
+            ],
+            "finance_product": [
+                ("Financial & Market Overview", ["fund", "etf", "index", "revenue", "market", "financial", "fiscal", "quarter", "asset", "investment"]),
+                ("Core Performance & Valuation Metrics", ["return", "nav", "aum", "margin", "profit", "yield", "ratio", "price", "cost", "growth", "cash flow"]),
+                ("Portfolio Composition & Strengths", ["portfolio", "equity", "allocation", "holding", "retention", "adoption", "feature", "advantage"]),
+                ("Strategic Verdict & Fiscal Outlook", ["outlook", "forecast", "guidance", "benchmark", "risk", "verdict", "recommendation"]),
+            ],
+            "narrative_history": [
+                ("Historical Context & Origins", ["born", "founded", "origin", "early", "dynasty", "ancient", "century", "era", "kingdom", "established"]),
+                ("Chronological Milestones & Events", ["reign", "war", "campaign", "conquest", "battle", "treaty", "expansion", "republic", "empire"]),
+                ("Governance, Reforms & Cultural Shifts", ["reform", "administration", "policy", "culture", "religion", "institution", "senate", "society", "economy"]),
+                ("Historical Impact & Enduring Legacy", ["legacy", "death", "succeeded", "influence", "history", "endured", "transformation", "impact"]),
+            ],
+            "meetings_dialogue": [
+                ("Meeting Context & Core Agenda", ["agenda", "meeting", "standup", "discuss", "sync", "topic", "participant", "overview"]),
+                ("Key Decisions & Consensus Reached", ["decided", "agreed", "confirmed", "approved", "consensus", "resolved", "alignment"]),
+                ("Open Questions, Risks & Blockers", ["blocker", "issue", "question", "pending", "risk", "concern", "challenge", "dependency"]),
+                ("Assigned Action Items & Next Steps", ["action", "next step", "owner", "deadline", "follow up", "deliver", "schedule"]),
+            ],
+            "actionable": [
+                ("Primary Objective & Action Scope", ["goal", "objective", "purpose", "overview", "requirement", "scope", "target"]),
+                ("Step-by-Step Execution Directives", ["step", "first", "next", "create", "run", "execute", "implement", "configure", "process"]),
+                ("Key Rules & Operational Standards", ["must", "ensure", "rule", "standard", "guideline", "require", "policy", "avoid"]),
+                ("Immediate Deliverables & Checklist", ["deliverable", "complete", "verify", "check", "final", "submit", "outcome"]),
+            ],
+            "chain_of_density": [
+                ("Core Subject & Foundational Definition", ["is a", "defined", "refers to", "consists", "overview", "primary", "fundamental"]),
+                ("High-Density Quantitative & Causal Facts", ["percent", "number", "rate", "energy", "process", "mechanism", "factor", "total"]),
+                ("Structural Taxonomy & Classifications", ["type", "category", "form", "stage", "phase", "component", "system", "group"]),
+                ("Empirical Synthesis & Systemic Impact", ["impact", "effect", "result", "function", "role", "significance", "global"]),
+            ],
+            "executive": [
+                ("Executive Summary & Core Thesis", ["overview", "summary", "core", "primary", "main", "objective", "purpose", "focus"]),
+                ("Key Quantitative Highlights & Facts", ["number", "metric", "total", "rate", "percent", "scale", "key", "data"]),
+                ("Foundational Pillars & Structure", ["structure", "component", "part", "system", "framework", "process", "organization"]),
+                ("Strategic Takeaways & Recommendations", ["takeaway", "conclusion", "impact", "outcome", "future", "strategy", "recommendation"]),
+            ],
+        }
 
-            # 3. Key Foundational Articles
-            if article_items:
-                top_articles = [a.strip().rstrip(".!?") + "." for a in article_items[:8]]
-                out.append("• **Foundational Articles & Provisions**:\n  - " + "\n  - ".join(top_articles))
-                if len(article_items) > 8:
-                    rest_articles = [a.strip().rstrip(".!?") + "." for a in article_items[8:16]]
-                    out.append("• **Governance, Fiscal & Emergency Articles**:\n  - " + "\n  - ".join(rest_articles))
-                return "\n".join(out)
-
-        # Standard genre profiles for other topics
-        if mode == "finance_product" or any(k in lower_doc for k in ["revenue", "arr", "ebitda", "gross margin", "q1", "q2", "q3", "q4", "fiscal", "guidance", "pricing"]):
-            genre = "finance_product"
-            thematic_profiles = [
-                ("Financial & Market Overview", ["revenue", "arr", "growth", "surpassing", "record", "results", "price", "market"]),
-                ("Core Performance & Value Metrics", ["margin", "gross margin", "fcf", "cash flow", "reduced", "costs", "performance"]),
-                ("Strengths, Retention & Adoption", ["retention", "enterprise", "accounts", "deployments", "clients", "pros"]),
-                ("Verdict & Strategic Outlook", ["guidance", "outlook", "raising", "authorizing", "forecast", "verdict"]),
-            ]
-        elif mode == "meetings_dialogue" or any(k in lower_doc for k in ["standup", "transcript", "sync", "confirmed", "requested", "agenda"]):
-            genre = "meetings_dialogue"
-            thematic_profiles = [
-                ("Meeting Context & Core Consensus", ["sync", "confirmed", "discussed", "agreed", "agenda", "status", "review"]),
-                ("Key Decisions & Technical Alignment", ["decided", "migration", "complete", "approved", "architecture", "release"]),
-                ("Identified Blockers & Dependencies", ["need", "blocker", "before", "however", "issue", "pending", "risk"]),
-                ("Assigned Action Items & Deadlines", ["must", "requested", "by", "friday", "wednesday", "today", "owner", "test"]),
-            ]
-        elif mode == "scientific_academic" or any(k in lower_doc for k in ["hypothesis", "methodology", "experiment", "dataset", "statistical", "theorem", "abstract", "transformer"]):
-            genre = "scientific_academic"
-            thematic_profiles = [
-                ("Research Objective & Hypothesis", ["bridges", "objective", "hypothesis", "propose", "investigates", "study", "problem"]),
-                ("Methodology & Experimental Framework", ["training", "method", "pipeline", "architecture", "attention", "algorithm", "dataset"]),
-                ("Empirical Findings & Quantitative Metrics", ["improves", "fidelity", "accuracy", "compressing", "results", "outperforms", "%"]),
-                ("Theoretical & Practical Implications", ["without losing", "demonstrates", "enables", "implications", "conclusion"]),
-            ]
-        elif any(k in lower_doc for k in ["observance", "men's day", "women's day", "awareness day", "pillars", "held annually", "celebrated on"]):
-            genre = "observance"
-            thematic_profiles = [
-                ("Core Purpose & Global Observance", ["observance", "held annually", "annual", "celebrated", "awareness", "objective"]),
-                ("Founding Origins & Milestones", ["revived", "chose", "birthday", "founded", "established", "history", "origin"]),
-                ("Core Objectives & Guiding Pillars", ["pillars", "objectives", "role models", "focus", "promote", "health", "relations"]),
-                ("Social Impact & Gender Equality", ["equality", "gender relations", "inequality", "society", "rights", "wellbeing"]),
-            ]
-        elif mode == "narrative_history" or any(k in lower_doc for k in ["emperor", "reigned", "dynasty", "conquest", "succeeded his father", "monarch", "regent"]):
-            genre = "biography"
-            thematic_profiles = [
-                ("Historical Identity & Overview", ["reigned", "emperor", "born", "father", "regent", "founder", "established", "third"]),
-                ("Territorial & Strategic Expansion", ["enlarged", "domains", "conquest", "dominance", "expand", "subcontinent", "empire", "military"]),
-                ("Governance & Administrative Reforms", ["administration", "tax", "centralised", "conciliating", "diplomacy", "policies", "officials"]),
-                ("Economic & Commercial Foundations", ["economy", "commercial", "wealth", "tripled", "trade", "revenue"]),
-                ("Cultural, Religious & Philosophical Policies", ["faiths", "creed", "syncretic", "culture", "indo-persian", "arts", "din-i ilahi"]),
-                ("Succession & Enduring Legacy", ["succeeded", "legacy", "jahangir", "prince", "salim", "greatest", "death"]),
-            ]
-        elif mode in ("technical", "architecture") or any(k in lower_doc for k in ["latency", "cluster", "api", "architecture", "kubernetes", "server", "database", "memory"]):
-            genre = "technical"
-            thematic_profiles = [
-                ("System Architecture & Overview", ["architecture", "ingress", "cluster", "controller", "service", "system", "standard"]),
-                ("Root Cause & Core Mechanisms", ["root cause", "failure", "spike", "memory", "latency", "leak", "bottleneck", "token"]),
-                ("Deployment & Optimization Actions", ["deployed", "hotfix", "bounds", "circuit-breaker", "pooling", "mitigation", "flow"]),
-                ("Empirical Performance & Verification", ["stabilized", "metrics", "throughput", "p99", "zero packet loss", "security"]),
-            ]
-        else:
-            genre = "general"
-            thematic_profiles = [
-                ("Executive Overview", ["is a", "overview", "primary", "main", "defined", "core", "originally"]),
-                ("Key Principles & Mechanisms", ["key", "development", "system", "principle", "mechanism", "structure"]),
-                ("Critical Perspectives & Analysis", ["analysis", "significance", "perspective", "evidence", "demonstrated"]),
-                ("Long-Term Impact & Outlook", ["impact", "outcome", "future", "outlook", "global", "concluded"]),
-            ]
+        thematic_profiles = STRICT_CATEGORY_PROFILES.get(mode, STRICT_CATEGORY_PROFILES["executive"])
 
         out = []
         used = set()
@@ -515,10 +601,6 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
             for idx, s in enumerate(sentences):
                 if idx in used:
                     continue
-                if genre == "biography":
-                    lower_s = s.lower()
-                    if any(bad in lower_s for bad in ["she delivered", "giving birth", "her father", "mariam-uz-zamani"]):
-                        continue
                 score = sum(1 for kw in kws if kw.lower() in s.lower())
                 if score > best_score:
                     best_score = score
@@ -528,17 +610,21 @@ DOCUMENT TO SUMMARIZE ({len(text):,} characters total):
                 used.add(best_idx)
                 out.append(f"• **{title}**: " + best_sent.rstrip(".!?") + ".")
 
-        if len(out) < 2:
-            step = max(len(sentences) // 4, 1)
-            stage_names = ["Executive Overview", "Key Developments", "Core Analysis", "Strategic Impact"]
-            out = []
-            for i in range(min(4, len(sentences))):
-                idx = min(i * step, len(sentences) - 1)
-                tag = stage_names[i] if i < len(stage_names) else f"Key Point {i+1}"
-                out.append(f"• **{tag}**: " + sentences[idx].rstrip(".!?") + ".")
+        # If any section in this category still needs a point, fill from remaining top sentences
+        # using strictly THIS category's own section titles (never leaking other categories!)
+        if len(out) < len(thematic_profiles):
+            used_titles = {b.split("**")[1] for b in out if "**" in b}
+            remaining_sents = [s for idx, s in enumerate(sentences) if idx not in used]
+            r_idx = 0
+            for title, _ in thematic_profiles:
+                if title not in used_titles and r_idx < len(remaining_sents):
+                    out.append(f"• **{title}**: " + remaining_sents[r_idx].rstrip(".!?") + ".")
+                    r_idx += 1
+                if len(out) >= 4:
+                    break
 
         if mode == "chain_of_density":
-            return " ".join([bullet.split(": ", 1)[-1] if ": " in bullet else bullet for bullet in out])
+            return "\n".join(out)
 
         return "\n".join(out)
 

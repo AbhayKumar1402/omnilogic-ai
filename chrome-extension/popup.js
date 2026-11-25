@@ -5,7 +5,8 @@
 const BACKEND = 'https://omnilogic-backend.onrender.com';
 
 // ── State ──────────────────────────────────────────────────
-let selectedMode   = 'executive';
+let selectedMode   = 'auto';
+let detectedMode   = 'executive';
 let currentTab     = null;
 let isLoading      = false;
 let lastSummary    = '';
@@ -83,18 +84,215 @@ function countWords(text) {
 
 function formatMode(mode) {
   const labels = {
-    executive:        'Executive',
-    technical:        'Technical',
-    chain_of_density: 'Dense',
-    actionable:       'Actions'
+    auto:                '✨ Auto-Detect',
+    executive:           'Executive Overview',
+    technical:           'Technical & Engineering',
+    architecture:        'Systems Architecture',
+    chain_of_density:    'Dense (Chain-of-Density)',
+    actionable:          'Action Items & Directives',
+    finance_product:     'Finance & Product Reviews',
+    narrative_history:   'Narrative & History',
+    meetings_dialogue:   'Meetings & Dialogue',
+    scientific_academic: 'Scientific & Academic',
+    legal_governance:    'Legal, Policy & Governance'
   };
   return labels[mode] || mode;
 }
 
+/**
+ * Automatically recognizes the topic category (across all 10 OmniLogic streams)
+ * from the active webpage's text, title, and URL.
+ */
+function autoDetectTopicCategory(text = '', title = '', url = '') {
+  const combined = `${title} ${url} ${(text || '').substring(0, 12000)}`.toLowerCase();
+  const u = (url || '').toLowerCase();
+
+  // Fast URL domain rules
+  if (u.includes('arxiv.org') || u.includes('ncbi.nlm') || u.includes('scholar.google') || u.includes('ieee.org') || u.includes('sciencedirect')) {
+    return 'scientific_academic';
+  }
+  if (u.includes('readthedocs.io') || u.includes('github.com') || u.includes('gitlab.com') || u.includes('stackoverflow.com') || u.includes('developer.mozilla.org')) {
+    return 'technical';
+  }
+
+  const lexicons = {
+    legal_governance: [
+      'constitution', 'article ', 'amendment', 'statute', 'supreme court', 'parliament',
+      'jurisdiction', 'fundamental rights', 'clause', 'ordinance', 'legislation', 'statutory',
+      'governance', 'directive principles', 'schedule', 'act, 19', 'act, 20'
+    ],
+    scientific_academic: [
+      'research paper', 'dissertation', 'thesis', 'literature review', 'conference',
+      'journal', 'ieee', 'acm', 'abstract', 'methodology', 'hypothesis', 'et al', 'arxiv',
+      'empirical', 'theorem', 'experiment', 'transduction', 'neural network', 'citation',
+      'peer-reviewed', 'preprint', 'clinical trial', 'statistical significance', 'university'
+    ],
+    finance_product: [
+      'factsheet', 'mutual fund', 'index fund', 'expense ratio', 'gross margin',
+      'free cash flow', 'portfolio', 'dividend', 'sharpe ratio', 'market cap',
+      'valuation', 'ebitda', 'quarterly revenue', 'fiscal year', 'stock market'
+    ],
+    architecture: [
+      'monolithic', 'microservices', 'distributed system', 'system topology', 'sharding',
+      'vector index', 'hnsw', 'ivfflat', 'load balancer', 'high availability', 'consensus',
+      'data flow', 'message queue', 'kafka', 'event-driven', 'scalability', 'database schema'
+    ],
+    technical: [
+      'fastapi', 'uvicorn', 'python', 'javascript', 'typescript', 'docker', 'kubernetes',
+      'sqlalchemy', 'endpoint', 'memory leak', 'garbage collection', 'compiler',
+      'post-mortem', 'outage', 'oauth', 'repository', 'tutorial', 'documentation', 'source code'
+    ],
+    narrative_history: [
+      'emperor', 'empire', 'dynasty', 'reign', 'century', 'kingdom', 'ancient',
+      'republic', 'senate', 'historical', 'biography', 'chronicle', 'treaty', 'civilization',
+      'world war', 'invasion', 'monarch', 'revolution'
+    ],
+    meetings_dialogue: [
+      'standup', 'transcript', 'attendees', 'moderator', 'speaker', 'agenda',
+      'minutes of meeting', 'blocker', 'sprint', 'q&a', 'interview', 'discussion'
+    ],
+    actionable: [
+      'action items', 'checklist', 'step 1', 'step 2', 'next steps', 'how to',
+      'playbook', 'todo', 'deliverables', 'standard operating procedure', 'guidelines'
+    ],
+    chain_of_density: [
+      'wikipedia', 'encyclopedia', 'metabolism', 'digestion', 'physiology',
+      'comprehensive overview', 'thermogenesis'
+    ]
+  };
+
+  let bestCat = u.includes('wikipedia.org') ? 'chain_of_density' : 'executive';
+  let bestScore = 0;
+
+  for (const [cat, words] of Object.entries(lexicons)) {
+    let score = 0;
+    for (const w of words) {
+      if (combined.includes(w)) score += 1;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestCat = cat;
+    }
+  }
+
+  return bestCat;
+}
+
+function updateDetectedCategoryUI(cat, isManual = false) {
+  detectedMode = cat;
+  const labelEl = document.getElementById('detectedCategoryLabel');
+  const badgeEl = document.getElementById('autoDetectBadge');
+  if (labelEl) {
+    labelEl.textContent = formatMode(cat);
+  }
+  if (badgeEl) {
+    badgeEl.textContent = isManual ? '⚙️ Manual Override' : '✨ Auto-Recognized';
+  }
+}
+
+const STRICT_CATEGORY_HEADERS = {
+  scientific_academic: [
+    'Research Objective & Academic Scope',
+    'Methodology & Structural Framework',
+    'Empirical Findings & Quantitative Specs',
+    'Scholarly Conclusions & Guidelines'
+  ],
+  technical: [
+    'Technical Overview & System Scope',
+    'Core Mechanisms & Implementation',
+    'Configuration & Operational Pipeline',
+    'Performance Metrics & Verification'
+  ],
+  architecture: [
+    'System Topology & Architectural Pattern',
+    'Component Boundaries & Data Flow',
+    'Scalability & Trade-off Analysis',
+    'Operational Resilience & Deployment'
+  ],
+  legal_governance: [
+    'Statutory & Constitutional Scope',
+    'Structural Provisions & Mandates',
+    'Foundational Rights & Obligations',
+    'Enforcement & Amendment Mechanisms'
+  ],
+  finance_product: [
+    'Financial & Market Overview',
+    'Core Performance & Valuation Metrics',
+    'Portfolio Composition & Strengths',
+    'Strategic Verdict & Fiscal Outlook'
+  ],
+  narrative_history: [
+    'Historical Context & Origins',
+    'Chronological Milestones & Events',
+    'Governance, Reforms & Cultural Shifts',
+    'Historical Impact & Enduring Legacy'
+  ],
+  meetings_dialogue: [
+    'Meeting Context & Core Agenda',
+    'Key Decisions & Consensus Reached',
+    'Open Questions, Risks & Blockers',
+    'Assigned Action Items & Next Steps'
+  ],
+  actionable: [
+    'Primary Objective & Action Scope',
+    'Step-by-Step Execution Directives',
+    'Key Rules & Operational Standards',
+    'Immediate Deliverables & Checklist'
+  ],
+  chain_of_density: [
+    'Core Subject & Foundational Definition',
+    'High-Density Quantitative & Causal Facts',
+    'Structural Taxonomy & Classifications',
+    'Empirical Synthesis & Systemic Impact'
+  ],
+  executive: [
+    'Executive Summary & Core Thesis',
+    'Key Quantitative Highlights & Facts',
+    'Foundational Pillars & Structure',
+    'Strategic Takeaways & Recommendations'
+  ]
+};
+
+/**
+ * Guarantees that every bullet point heading in the summary strictly matches the active category
+ * (eliminating any cross-category leakage such as Financial headings on Academic pages)
+ * and cleans up glued search-snippet breadcrumb prefixes.
+ */
+function enforceStrictCategoryHeadings(rawSummary, mode) {
+  if (!rawSummary) return '';
+  const headers = STRICT_CATEGORY_HEADERS[mode] || STRICT_CATEGORY_HEADERS.executive;
+  const allowedLower = new Set(headers.map(h => h.toLowerCase()));
+
+  let bulletIdx = 0;
+  const lines = rawSummary.split('\n').map(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return '';
+
+    // Match any bullet or bold-headed line: "• **Heading**: text" or "**Heading**: text" or "- Heading: text"
+    const m = trimmed.match(/^(?:[•\-*]\s*)?\*\*([^*]+)\*\*:\s*(.*)$/);
+    if (m) {
+      const existingHeading = m[1].trim();
+      let body = m[2].trim();
+      // Strip glued breadcrumb prefix like "CARE Group of InstitutionsExact length..." -> "Exact length..."
+      body = body.replace(/^[A-Z][A-Za-z0-9 &.,'-]{2,40}?([A-Z][a-z]{3,}\b)/, '$1');
+
+      const targetHeading = allowedLower.has(existingHeading.toLowerCase())
+        ? existingHeading
+        : headers[Math.min(bulletIdx, headers.length - 1)];
+      bulletIdx++;
+      return `• **${targetHeading}**: ${body}`;
+    }
+    return trimmed;
+  }).filter(Boolean);
+
+  return lines.join('\n');
+}
+
 /** Render markdown-style bullets & bold from summary text */
-function renderSummary(text) {
+function renderSummary(text, mode = detectedMode) {
+  const strictText = enforceStrictCategoryHeadings(text, mode);
   // Bold **text**
-  let html = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  let html = strictText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
   // Bullet lines starting with - or •
   const lines = html.split('\n');
   let inList = false;
@@ -210,22 +408,17 @@ async function callSummarizer(text, mode, meta) {
     } catch (_) {}
   }
 
-  // Client-side local fallback if backend server is stopped
+  // Client-side local fallback if backend server is stopped — strictly bound to category headers
+  const headers = STRICT_CATEGORY_HEADERS[mode] || STRICT_CATEGORY_HEADERS.executive;
   const sentences = text
+    .replace(/([a-z]{3,})([A-Z][a-z]{3,})/g, '$1. $2')
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())
-    .filter(s => s.length > 35 && s.length < 320);
-  const top = sentences.slice(0, 5);
-  let fallbackSummary = '';
-  if (mode === 'executive') {
-    fallbackSummary = top.slice(0, 3).map((s, i) => `- **Key Takeaway ${i + 1}**: ${s}`).join('\n');
-  } else if (mode === 'actionable') {
-    fallbackSummary = top.slice(0, 4).map((s, i) => `- **Action ${i + 1}**: ${s}`).join('\n');
-  } else if (mode === 'chain_of_density') {
-    fallbackSummary = top.slice(0, 4).join(' ');
-  } else {
-    fallbackSummary = top.slice(0, 4).map(s => `- ${s}`).join('\n');
-  }
+    .filter(s => s.length > 35 && s.length < 340);
+  const top = sentences.slice(0, 4);
+  const fallbackSummary = top
+    .map((s, i) => `• **${headers[i] || headers[headers.length - 1]}**: ${s}`)
+    .join('\n');
   return {
     mode,
     summary: fallbackSummary || text.substring(0, 400),
@@ -397,15 +590,26 @@ async function runSummarize() {
 
     extractedWords = extracted.wordCount || countWords(extracted.text);
 
+    // Step 2.5 — Automatically recognize topic category if set to 'auto'
+    const effectiveMode = selectedMode === 'auto'
+      ? autoDetectTopicCategory(extracted.text, extracted.meta?.title || currentTab.title, extracted.meta?.url || currentTab.url)
+      : selectedMode;
+    updateDetectedCategoryUI(effectiveMode, selectedMode !== 'auto');
+
     // Step 3 — Call backend
-    setProgress(60, 'Sending to OmniLogic AI…');
+    setProgress(60, `Summarizing as ${formatMode(effectiveMode)}…`);
     const t0 = Date.now();
-    const result = await callSummarizer(extracted.text, selectedMode, extracted.meta || {});
+    const result = await callSummarizer(extracted.text, effectiveMode, extracted.meta || {});
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
     // Step 4 — Render result
     setProgress(100, 'Done!');
-    lastSummary = result.summary || result.text || result.result || JSON.stringify(result);
+    const finalMode = result.mode || effectiveMode;
+    updateDetectedCategoryUI(finalMode, selectedMode !== 'auto');
+    lastSummary = enforceStrictCategoryHeadings(
+      result.summary || result.text || result.result || JSON.stringify(result),
+      finalMode
+    );
 
     const summWords = countWords(lastSummary);
     const ratio = extractedWords > 0
@@ -421,8 +625,8 @@ async function runSummarize() {
     statsRow.classList.add('fade-in');
 
     // Output
-    outputBody.innerHTML = renderSummary(lastSummary);
-    modeTag.textContent  = formatMode(selectedMode);
+    outputBody.innerHTML = renderSummary(lastSummary, finalMode);
+    modeTag.textContent  = selectedMode === 'auto' ? `✨ ${formatMode(finalMode)}` : formatMode(finalMode);
     if (result.model) modelTag.textContent = result.model;
     outputFooter.style.display = 'flex';
     outputPanel.style.display  = 'block';
@@ -431,7 +635,7 @@ async function runSummarize() {
     // Cache in storage
     chrome.storage.local.set({
       lastSummary,
-      lastMode: selectedMode,
+      lastMode: finalMode,
       lastUrl: currentTab.url,
       lastTitle: currentTab.title,
       lastTime: Date.now()
@@ -459,14 +663,19 @@ async function runSummarize() {
   }
 }
 
-// ── Mode selection ─────────────────────────────────────────
-document.querySelectorAll('.mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    selectedMode = btn.dataset.mode;
+// ── Mode selection (Auto by default, optional manual override) ──
+const modeOverrideSelect = document.getElementById('modeOverrideSelect');
+if (modeOverrideSelect) {
+  modeOverrideSelect.addEventListener('change', (e) => {
+    selectedMode = e.target.value;
+    if (selectedMode === 'auto') {
+      const cat = autoDetectTopicCategory('', currentTab?.title || '', currentTab?.url || '');
+      updateDetectedCategoryUI(cat, false);
+    } else {
+      updateDetectedCategoryUI(selectedMode, true);
+    }
   });
-});
+}
 
 // ── Button events ──────────────────────────────────────────
 summarizeBtn.addEventListener('click', runSummarize);
@@ -511,10 +720,10 @@ async function restoreLastSession(tab) {
     data.lastTime &&
     (Date.now() - data.lastTime) < 120000
   ) {
-    // Show previous summary for the same page (only if fresh < 2 mins and clean)
-    lastSummary = data.lastSummary;
-    outputBody.innerHTML = renderSummary(lastSummary);
-    modeTag.textContent  = formatMode(data.lastMode || 'executive');
+    const activeCat = data.lastMode || detectedMode || 'executive';
+    lastSummary = enforceStrictCategoryHeadings(data.lastSummary, activeCat);
+    outputBody.innerHTML = renderSummary(lastSummary, activeCat);
+    modeTag.textContent  = `✨ ${formatMode(activeCat)}`;
     outputFooter.style.display = 'flex';
     outputPanel.style.display  = 'block';
   }
@@ -522,10 +731,22 @@ async function restoreLastSession(tab) {
 
 // ── Init ───────────────────────────────────────────────────
 (async function init() {
-  // Load tab info
+  // Load tab info & immediately auto-detect topic category
   currentTab = await getActiveTab();
   if (currentTab) {
     pageTitle.textContent = currentTab.title || currentTab.url || 'Unknown page';
+    const initialCat = autoDetectTopicCategory('', currentTab.title || '', currentTab.url || '');
+    updateDetectedCategoryUI(initialCat, false);
+
+    // Refine category from live page text in background
+    if (currentTab.url && !currentTab.url.startsWith('chrome://') && !isPdfUrl(currentTab.url)) {
+      extractPageContent(currentTab).then((res) => {
+        if (res && res.text && selectedMode === 'auto') {
+          const refinedCat = autoDetectTopicCategory(res.text, currentTab.title || '', currentTab.url || '');
+          updateDetectedCategoryUI(refinedCat, false);
+        }
+      }).catch(() => {});
+    }
   }
 
   // Check backend
